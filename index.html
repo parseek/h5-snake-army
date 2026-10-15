@@ -114,6 +114,14 @@
             box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
         }
 
+        /* [hidden] 必须真的藏起来。
+           .row / .lanBox 这些容器自己写了 display:flex，会盖掉浏览器默认的
+           [hidden]{display:none} —— 之前「我是主机/我是客机」「搜索附近房间」
+           这几个 .row 就因此在所有模式下都露着。 */
+        .start [hidden] {
+            display: none !important;
+        }
+
         /* 开始 / 联机面板：贴视口的浮层。
            以前用 absolute + inset:0 挂在 .stage 上，棋盘只有 300px 高，
            面板内容一长（联机面板 363px）就被 .stage 的 overflow:hidden 切掉，
@@ -3598,15 +3606,19 @@
                     document.getElementById(KIND_BTNS[k]).classList.toggle('is-on', k === kind);
                 }
                 if (isWan) etRefresh();
-                if (!isCode) {
-                    document.getElementById('netStatus').textContent = isDirect
+                // 四种模式都要写，漏掉一种的话状态行会留着上一个模式的文字
+                // （连接码模式之前就一直显示着「直连：…」）
+                document.getElementById('netStatus').textContent = isCode
+                    ? (NATIVE
+                        ? '连接码：主机点「我是主机」生成码，客机粘贴后点「用这段码」'
+                        : '连接码：主机点「我是主机」生成码，客机粘贴后点「用这段码」')
+                    : isDirect
                         ? (NATIVE
                             ? '直连：一边「开个房间」把地址发出来，另一边粘地址搜索'
                             : '直连：把桌面版房主的地址粘进来就能进房（浏览器版开不了房）')
                         : isLan
                             ? '同一个 Wi-Fi：一方「开个房间」，另一方「搜索附近房间」'
                             : '跨网：先启动虚拟局域网，之后和局域网一样搜';
-                }
             }
 
             // ------------------------------ EasyTier 跨网 ------------------------------
