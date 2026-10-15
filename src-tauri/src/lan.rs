@@ -27,6 +27,10 @@ type Rooms = Arc<Mutex<HashMap<String, Room>>>;
 
 struct Room {
     name: String,
+    /// 房间描述，房主填，给来客看
+    desc: String,
+    /// 房主的玩家名
+    player: String,
     offer: String,
     answer: Option<String>,
     seen: u64,
@@ -34,11 +38,41 @@ struct Room {
 
 static PORT: OnceLock<u16> = OnceLock::new();
 
+/// 空字符串就退回 fallback，省得房间名/玩家名变成空白条目
+trait IfEmpty {
+    fn if_empty(self, fallback: &str) -> String;
+}
+
+impl IfEmpty for String {
+    fn if_empty(self, fallback: &str) -> String {
+        if self.is_empty() {
+            fallback.to_string()
+        } else {
+            self
+        }
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// 本机在局域网里的地址：连一个外网地址但不真发数据，看内核选了哪张网卡。
+fn lan_ip() -> String {
+    let s = match UdpSocket::bind(("0.0.0.0", 0)) {
+        Ok(s) => s,
+        Err(_) => return "127.0.0.1".to_string(),
+    };
+    match s.connect(("8.8.8.8", 80)) {
+        Ok(_) => s
+            .local_addr()
+            .map(|a| a.ip().to_string())
+            .unwrap_or_else(|_| "127.0.0.1".to_string()),
+        Err(_) => "127.0.0.1".to_string(),
+    }
 }
 
 fn hostname() -> String {
@@ -136,7 +170,15 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                 Ok(m) => m
                     .iter()
                     .map(|(id, r)| {
-                        json!({ "id": id, "name": r.name, "taken": r.answer.is_some() })
+                        json!({
+                            "id": id,
+                            "name": r.name,
+                            "desc": r.desc,
+                            "player": r.player,
+                            "taken": r.answer.is_some(),
+                            // 已经有人应答就是 2 人满员（房主 + 来客）
+                            "players": if r.answer.is_some() { 2 } else { 1 },
+                        })
                     })
                     .collect(),
                 Err(_) => Vec::new(),
@@ -181,20 +223,37 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
             if offer.is_empty() {
                 return (400, json!({ "error": "缺少 offer" }).to_string());
             }
-            let id = format!("r{}", now_secs() * 1000 + (Instant::now().elapsed().subsec_millis() as u64));
-            let name = v
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or(&host)
-                .chars()
-                .take(24)
-                .collect::<String>();
+            // 加个自增序号：同一毫秒里建两个房间也不会撞 id（测试里踩到过）
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000;
+            let id = format!(
+                "r{}{:03}",
+                now_secs() * 1000 + (Instant::now().elapsed().subsec_millis() as u64),
+                seq
+            );
+            let take = |k: &str, max: usize, fallback: &str| -> String {
+                v.get(k)
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(max)
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+                    .if_empty(fallback)
+            };
+            let name = take("name", 24, &host);
+            let desc = take("desc", 80, "");
+            let player = take("player", 16, &host);
             sweep(rooms);
             if let Ok(mut m) = rooms.lock() {
                 m.insert(
                     id.clone(),
                     Room {
                         name,
+                        desc,
+                        player,
                         offer: offer.to_string(),
                         answer: None,
                         seen: now_secs(),
@@ -324,12 +383,16 @@ fn udp_responder(tcp_port: u16, rooms: Rooms) {
 // ---------------------------------------------------------------- 对外
 
 /// 起内嵌信令服务，返回 HTTP 端口。重复调用返回同一个端口。
-pub fn start() -> Result<u16, String> {
+///
+/// 端口由房主在界面上定（默认随机一个），被占就退回系统随机分配 ——
+/// 所以不主动在开机时启动：只在真的开房那一刻起，端口才是房主要的那个。
+pub fn start(port: Option<u16>) -> Result<u16, String> {
     if let Some(p) = PORT.get() {
         return Ok(*p);
     }
 
-    let listener = TcpListener::bind(("0.0.0.0", PREFERRED_PORT))
+    let want = port.unwrap_or(PREFERRED_PORT);
+    let listener = TcpListener::bind(("0.0.0.0", want))
         .or_else(|_| TcpListener::bind(("0.0.0.0", 0)))
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -410,16 +473,91 @@ pub fn discover(timeout: Duration) -> Vec<Value> {
 // ---------------------------------------------------------------- Tauri 命令
 
 #[tauri::command]
-pub fn lan_start() -> Result<Value, String> {
-    let port = start()?;
+pub fn lan_start(port: Option<u16>) -> Result<Value, String> {
+    let port = start(port)?;
+    let ip = lan_ip();
     Ok(json!({
         "port": port,
         "url": format!("http://127.0.0.1:{}", port),
         "name": hostname(),
+        // 房主要把这个地址发给对方（界面上直接显示 ip:port）
+        "lanIp": ip,
+        "share": format!("{}:{}", ip, port),
+        "ips": [ip],
     }))
 }
 
 #[tauri::command]
 pub fn lan_discover(timeout_ms: Option<u64>) -> Vec<Value> {
     discover(Duration::from_millis(timeout_ms.unwrap_or(1500)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn http(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("连不上内嵌服务");
+        let req = format!(
+            "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            method,
+            path,
+            body.len(),
+            body
+        );
+        s.write_all(req.as_bytes()).unwrap();
+        let mut r = String::new();
+        let _ = s.read_to_string(&mut r);
+        let code: u16 = r
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        (code, r.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+    }
+
+    #[test]
+    fn room_metadata_and_port() {
+        let port = start(Some(47899)).expect("起服务失败");
+        println!("port = {}", port);
+        assert_eq!(port, 47899, "房主指定的端口应当被采用");
+
+        assert_eq!(http(port, "GET", "/api/ping", "").0, 200);
+
+        let (code, body) = http(
+            port,
+            "POST",
+            "/api/room",
+            r#"{"name":"小王的车队","desc":"随便玩，别撞墙","player":"阿强","offer":"SNK#1.0.0#O#AAA"}"#,
+        );
+        assert_eq!(code, 200);
+        println!("建房返回 = {}", body);
+
+        let (_, list) = http(port, "GET", "/api/rooms", "");
+        println!("房间列表 = {}", list);
+        let v: Value = serde_json::from_str(&list).unwrap();
+        let room = &v["rooms"][0];
+        assert_eq!(room["name"], "小王的车队");
+        assert_eq!(room["desc"], "随便玩，别撞墙");
+        assert_eq!(room["player"], "阿强");
+        assert_eq!(room["players"], 1);
+        assert_eq!(room["taken"], false);
+
+        // 房间名只填空格时应当退回主机名，不能变成空条目
+        let (_, b2) = http(port, "POST", "/api/room", r#"{"name":"   ","offer":"x"}"#);
+        let id2 = serde_json::from_str::<Value>(&b2).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (_, list2) = http(port, "GET", "/api/rooms", "");
+        let v2: Value = serde_json::from_str(&list2).unwrap();
+        for r in v2["rooms"].as_array().unwrap() {
+            if r["id"] == id2.as_str() {
+                println!("空名房间 = {}", r);
+                assert!(!r["name"].as_str().unwrap().is_empty(), "名字不该是空的");
+                assert_eq!(r["player"].as_str().unwrap(), hostname().as_str());
+            }
+        }
+    }
 }

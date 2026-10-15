@@ -10,9 +10,6 @@ mod lan;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 开机就把局域网服务挂上：这样别人一搜就能看到这台机器（哪怕还没点「开个房间」）
-    let _ = lan::start();
-
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             lan::lan_start,

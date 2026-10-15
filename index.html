@@ -172,6 +172,26 @@
             border-radius: 6px;
         }
 
+        .start .portInput {
+            width: 104px;
+            flex: none;
+        }
+
+        .start .lanRoom .info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .start .lanRoom .sub2 {
+            font-size: 11px;
+            line-height: 1.4;
+            opacity: 0.78;
+            white-space: normal;
+        }
+
         .start .lanRoom span {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -478,6 +498,7 @@
                 <div class="row" id="netKindRow">
                     <button class="startBtn small" id="kindLanBtn">局域网</button>
                     <button class="startBtn small" id="kindWanBtn">跨网</button>
+                    <button class="startBtn small" id="kindDirectBtn">直连</button>
                     <button class="startBtn small" id="kindCodeBtn">连接码</button>
                 </div>
                 <div class="tip" id="netKindTip"></div>
@@ -497,12 +518,28 @@
                 </div>
 
                 <div class="lanBox" id="lanBox" hidden>
+                    <input id="myName" class="netIce" spellcheck="false" placeholder="你的玩家名（对方看到的名字）" />
+                    <input id="roomName" class="netIce" spellcheck="false" placeholder="房间名" />
+                    <input id="roomDesc" class="netIce" spellcheck="false" placeholder="房间描述（给对方看，可留空）" />
                     <div class="row">
-                        <button class="startBtn small" id="lanScanBtn">搜索房间</button>
+                        <input id="roomPort" class="netIce portInput" spellcheck="false" placeholder="端口" />
                         <button class="startBtn small" id="lanHostBtn">开个房间</button>
                     </div>
                     <div class="tip" id="lanMsg">同一个 Wi-Fi 下可以直接互相搜到</div>
+                    <div class="row" id="lanScanRow">
+                        <button class="startBtn small" id="lanScanBtn">搜索附近房间</button>
+                    </div>
                     <div class="lanList" id="lanList"></div>
+                </div>
+
+                <div class="lanBox" id="directBox" hidden>
+                    <input id="directAddr" class="netIce" spellcheck="false"
+                           placeholder="对方的 IP 或网址，例如 192.168.1.23:47821" />
+                    <div class="row">
+                        <button class="startBtn small" id="directSearchBtn">搜索这个地址</button>
+                    </div>
+                    <div class="tip" id="directMsg">房主开好房间后会把地址显示出来，粘到这里就能搜到他的房间</div>
+                    <div class="lanList" id="directList"></div>
                 </div>
                 <div class="lanBox" id="wanBox" hidden>
                     <div class="tip">两边填一样的网络名和密码，就能进同一张虚拟局域网；
@@ -3478,6 +3515,7 @@
             let lanBase = null;    // 本地信令服务地址
             let lanRoom = null;    // 我开的房间 id
             let lanPoll = null;    // 主机轮询应答码的定时器
+            let lanShare = '';     // 房主要发出去的地址 ip:port
 
             function lanApi(base, path, body) {
                 const opt = (body === undefined)
@@ -3491,10 +3529,12 @@
                 });
             }
 
-            async function lanOwnBase() {
+            async function lanOwnBase(port) {
                 if (lanBase) return lanBase;
-                const info = await NATIVE.invoke('lan_start');
+                // 端口由房主定；没填就交给后端用默认端口
+                const info = await NATIVE.invoke('lan_start', { port: port || null });
                 lanBase = info.url;
+                lanShare = info.share || ('127.0.0.1:' + info.port);
                 return lanBase;
             }
 
@@ -3508,44 +3548,54 @@
             const KIND_TIP = {
                 lan: '局域网：同一个 Wi-Fi 下自动搜到房间',
                 wan: '跨网：两边用同一个网络名和密码，EasyTier 会把你们接进同一张虚拟局域网',
+                direct: '直连：知道对方 IP / 网址就直接搜他的房间，不依赖广播 —— 跨网、公司网里通常更靠谱',
                 code: '连接码：手动把码发给对方（浏览器版只有这一种）'
             };
 
+            const DEFAULT_PORT = 47812;
+
             // 只在「连接码」类型下出现的元素
             const CODE_ONLY = ['netRoleRow', 'netCode', 'netCopyRow', 'netHint', 'netMore', 'netIce', 'netPeerIp'];
-            const KIND_BTNS = { lan: 'kindLanBtn', wan: 'kindWanBtn', code: 'kindCodeBtn' };
+            const KIND_BTNS = { lan: 'kindLanBtn', wan: 'kindWanBtn', direct: 'kindDirectBtn', code: 'kindCodeBtn' };
 
             function setNetKind(kind) {
                 netKind = kind;
                 const isLan = kind === 'lan';
                 const isWan = kind === 'wan';
+                const isDirect = kind === 'direct';
                 const isCode = kind === 'code';
 
                 document.getElementById('netKindTip').textContent = KIND_TIP[kind] || '';
 
                 for (const id of CODE_ONLY) document.getElementById(id).hidden = !isCode;
                 netManualTipEl.hidden = !isCode;
-                // 浏览器版：选择器留着但把要原生侧的两种置灰，并给出原因。
+                // 浏览器版：选择器留着但把要原生侧的几种置灰，并给出原因。
                 // 直接藏起来只会让人以为功能没了，说不清为什么。
-                for (const id of ['kindLanBtn', 'kindWanBtn']) {
+                for (const id of ['kindLanBtn', 'kindWanBtn', 'kindDirectBtn']) {
                     const b = document.getElementById(id);
                     b.disabled = !NATIVE;
                     b.title = NATIVE ? '' : '需要桌面版';
                 }
                 document.getElementById('netNativeWarn').hidden = !!NATIVE;
 
-                // 局域网块：局域网类型一直有；跨网类型要等虚拟网起来了再放出来
-                lanBoxEl.hidden = !(isLan || (isWan && etRunning));
-                document.getElementById('wanBox').hidden = !isWan;
+                // 开房表单三种模式都要（开房这件事本身是一样的），只是搜索方式不同
+                const canHost = isLan || isWan || isDirect;
+                lanBoxEl.hidden = !canHost;
+                // 「搜索附近房间」靠 UDP 广播：直连模式不用，跨网模式等虚拟网起来再用
+                document.getElementById('lanScanRow').hidden = !(isLan || (isWan && etRunning));
+                document.getElementById('lanList').hidden = isDirect;
+                document.getElementById('directBox').hidden = !isDirect;
 
                 for (const k in KIND_BTNS) {
                     document.getElementById(KIND_BTNS[k]).classList.toggle('is-on', k === kind);
                 }
                 if (isWan) etRefresh();
-                if (isLan || !isCode) {
-                    document.getElementById('netStatus').textContent = isLan
-                        ? '同一个 Wi-Fi：一方「开个房间」，另一方「搜索房间」'
-                        : '跨网：先启动虚拟局域网，之后和局域网一样搜';
+                if (!isCode) {
+                    document.getElementById('netStatus').textContent = isDirect
+                        ? '直连：一边「开个房间」把地址发出来，另一边粘地址搜索'
+                        : isLan
+                            ? '同一个 Wi-Fi：一方「开个房间」，另一方「搜索附近房间」'
+                            : '跨网：先启动虚拟局域网，之后和局域网一样搜';
                 }
             }
 
@@ -3612,11 +3662,19 @@
             if (NATIVE) {
                 document.getElementById('kindLanBtn').addEventListener('click', function () { setNetKind('lan'); });
                 document.getElementById('kindWanBtn').addEventListener('click', function () { setNetKind('wan'); });
+                document.getElementById('kindDirectBtn').addEventListener('click', function () { setNetKind('direct'); });
+                document.getElementById('directSearchBtn').addEventListener('click', directSearch);
+                document.getElementById('directAddr').addEventListener('keydown', function (ev) {
+                    if (ev.key === 'Enter') { ev.preventDefault(); directSearch(); }
+                });
                 document.getElementById('kindCodeBtn').addEventListener('click', function () { setNetKind('code'); });
                 document.getElementById('etStartBtn').addEventListener('click', etStart);
                 document.getElementById('etStopBtn').addEventListener('click', etStop);
                 // 给个默认网络名，省得两边商量
                 document.getElementById('etNetwork').value = 'snake-' + Math.random().toString(36).slice(2, 7);
+                // 端口默认随机一个，避免两边固定端口撞车
+                document.getElementById('roomPort').value = String(47000 + Math.floor(Math.random() * 2000));
+                document.getElementById('myName').value = '玩家' + Math.floor(Math.random() * 90 + 10);
             }
 
             function lanStopPolling() {
@@ -3646,32 +3704,70 @@
                             rows.push({ url: p.url, host: info.host || p.name, room: r });
                         }
                     }
-                    lanRenderRooms(rows);
+                    lanRenderRooms(rows, lanListEl, lanMsgEl);
                 } catch (e) {
                     lanMsgEl.textContent = '搜索失败：' + e.message;
                 }
             }
 
-            function lanRenderRooms(rows) {
-                lanListEl.innerHTML = '';
+            // 直连：不给广播留机会，直接问某个地址要房间列表
+            async function directSearch() {
+                if (!NATIVE) return;
+                const noteEl = document.getElementById('directMsg');
+                const listEl = document.getElementById('directList');
+                listEl.innerHTML = '';
+                let raw = document.getElementById('directAddr').value.trim();
+                if (!raw) { noteEl.textContent = '先填对方的 IP 或网址'; return; }
+                // 接受 1.2.3.4:47821 / 1.2.3.4 / http://host:port / host:port
+                raw = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+                if (raw.indexOf(':') < 0) raw += ':' + DEFAULT_PORT;
+                const url = 'http://' + raw;
+                noteEl.textContent = '正在问 ' + url + ' …';
+                try {
+                    const info = await lanApi(url, '/api/rooms');
+                    const rows = (info.rooms || []).map(function (r) {
+                        return { url: url, host: info.host, room: r };
+                    });
+                    lanRenderRooms(rows, listEl, noteEl);
+                } catch (e) {
+                    noteEl.textContent = '连不上 ' + url + '：' + e.message +
+                        '　（对方没开房 / 防火墙挡着 / 地址写错，都有可能）';
+                }
+            }
+
+            function lanRenderRooms(rows, listEl, noteEl) {
+                listEl.innerHTML = '';
                 if (!rows.length) {
-                    lanMsgEl.textContent = '没搜到房间 —— 让对方点一下右上角的「开个房间」再搜';
+                    noteEl.textContent = '没搜到房间 —— 让对方先点「开个房间」';
                     return;
                 }
-                lanMsgEl.textContent = '搜到 ' + rows.length + ' 个房间，点「加入」直接开局';
+                noteEl.textContent = '搜到 ' + rows.length + ' 个房间，看清信息后点「进入」';
                 for (const row of rows) {
+                    const r = row.room;
                     const div = document.createElement('div');
                     div.className = 'lanRoom';
-                    const span = document.createElement('span');
-                    span.textContent = row.host + ' · ' + row.room.name + (row.room.taken ? '（已满）' : '');
+
+                    const info = document.createElement('div');
+                    info.className = 'info';
+                    const t1 = document.createElement('span');
+                    t1.textContent = r.name + '　·　' + (r.player || row.host || '?') +
+                        '　·　' + (r.players || 1) + '/2 人' + (r.taken ? '（已满）' : '');
+                    info.appendChild(t1);
+                    if (r.desc) {
+                        const t2 = document.createElement('span');
+                        t2.className = 'sub2';
+                        t2.textContent = r.desc;
+                        info.appendChild(t2);
+                    }
+
                     const btn = document.createElement('button');
                     btn.className = 'startBtn small';
-                    btn.textContent = '加入';
-                    btn.disabled = !!row.room.taken;
-                    btn.addEventListener('click', function () { lanJoin(row.url, row.room.id); });
-                    div.appendChild(span);
+                    btn.textContent = '进入';
+                    btn.disabled = !!r.taken;
+                    btn.addEventListener('click', function () { lanJoin(row.url, r.id); });
+                    div.appendChild(info);
                     div.appendChild(btn);
-                    lanListEl.appendChild(div);
+                    listEl.appendChild(div);
                 }
             }
 
@@ -3680,7 +3776,8 @@
                 if (netBusy) return;
                 netBusy = true;
                 try {
-                    const base = await lanOwnBase();
+                    const portNum = parseInt(document.getElementById('roomPort').value, 10);
+                    const base = await lanOwnBase(isFinite(portNum) ? portNum : null);
                     lanMsgEl.textContent = '正在开房间…';
 
                     netLeave();
@@ -3693,11 +3790,17 @@
                     // 同一个局域网用不着公网候选，等 2.5 秒就够，别让人干等
                     await netWaitIce(netPC, 2500);
 
-                    const made = await lanApi(base, '/api/room',
-                        { offer: netEncode(netPC.localDescription.sdp, 'offer') });
+                    const made = await lanApi(base, '/api/room', {
+                        name: document.getElementById('roomName').value.trim(),
+                        desc: document.getElementById('roomDesc').value.trim(),
+                        player: document.getElementById('myName').value.trim(),
+                        offer: netEncode(netPC.localDescription.sdp, 'offer')
+                    });
                     lanRoom = made.id;
-                    netSetStatus('房间开好了', '等对方在「搜索房间」里看到你，点一下就开局');
-                    lanMsgEl.textContent = '房间里已有 1 人（你），等对方加入…';
+                    netSetStatus('房间开好了',
+                        netKind === 'direct' ? '把地址发给对方，让他在「直连」里搜' : '等对方搜到并进入');
+                    lanMsgEl.textContent = '房间里已有 1 人（你）。把　' + lanShare +
+                        '　发给对方' + (netKind === 'direct' ? '，让他粘到上面的地址框里搜' : '，让他搜房间');
 
                     lanStopPolling();
                     lanPoll = setInterval(async function () {
