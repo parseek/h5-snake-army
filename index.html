@@ -199,6 +199,27 @@
             border-radius: 4px;
         }
 
+        .start .warn {
+            width: 88%;
+            margin: 2px 0;
+            padding: 8px 10px;
+            text-align: left;
+            line-height: 1.55;
+            color: #ffe2ac;
+            background: rgba(186, 108, 0, 0.28);
+            border: 1px solid rgba(255, 201, 122, 0.45);
+            border-radius: 6px;
+        }
+
+        .start .warn[hidden] {
+            display: none;
+        }
+
+        .start .startBtn:disabled {
+            opacity: 0.38;
+            cursor: not-allowed;
+        }
+
         .start .startBtn.is-on {
             box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.75);
         }
@@ -392,6 +413,12 @@
                     <button class="startBtn small" id="kindCodeBtn">连接码</button>
                 </div>
                 <div class="tip" id="netKindTip"></div>
+                <div class="tip warn" id="netNativeWarn" hidden>
+                    ⚠ 当前是<b>浏览器版</b>：<b>局域网（自动搜房）</b>和<b>跨网（EasyTier）</b>都用不了。<br>
+                    网页不能监听端口、不能收 UDP 广播、也没有 mDNS 浏览 API ——
+                    「被别人搜到」这半边浏览器永远做不到；跨网还得能拉起 EasyTier 进程，更不可能。<br>
+                    这两种请用<b>桌面版</b>；浏览器版只能走「连接码」手动配对。
+                </div>
                 <div class="row" id="netRoleRow">
                     <button class="startBtn small" id="netHostBtn">我是主机</button>
                     <button class="startBtn small" id="netGuestBtn">我是客机</button>
@@ -3310,6 +3337,14 @@
 
                 for (const id of CODE_ONLY) document.getElementById(id).hidden = !isCode;
                 netManualTipEl.hidden = !isCode;
+                // 浏览器版：选择器留着但把要原生侧的两种置灰，并给出原因。
+                // 直接藏起来只会让人以为功能没了，说不清为什么。
+                for (const id of ['kindLanBtn', 'kindWanBtn']) {
+                    const b = document.getElementById(id);
+                    b.disabled = !NATIVE;
+                    b.title = NATIVE ? '' : '需要桌面版';
+                }
+                document.getElementById('netNativeWarn').hidden = !!NATIVE;
 
                 // 局域网块：局域网类型一直有；跨网类型要等虚拟网起来了再放出来
                 lanBoxEl.hidden = !(isLan || (isWan && etRunning));
@@ -3536,9 +3571,8 @@
                 netUseBtnEl.disabled = true;
                 netUseBtnEl.textContent = '用这段码';
                 netSetTeam(teamMode);
-                // 桌面版有局域网/跨网两种；纯浏览器只有连接码
-                document.getElementById('netKindRow').hidden = !NATIVE;
-                document.getElementById('netKindTip').hidden = !NATIVE;
+                // 桌面版有局域网/跨网两种；纯浏览器只有连接码 —— 但选择器仍然显示，
+                // 只是把那两种置灰并说明原因（见 setNetKind）
                 setNetKind(NATIVE ? 'lan' : 'code');
                 lanListEl.innerHTML = '';
                 lanMsgEl.textContent = '同一个 Wi-Fi 下可以直接互相搜到';
