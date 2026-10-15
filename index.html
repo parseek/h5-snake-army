@@ -142,6 +142,48 @@
             margin: auto;
         }
 
+        .start .lanBox {
+            width: 88%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .start .lanBox[hidden] {
+            display: none;
+        }
+
+        .start .lanList {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .start .lanRoom {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 5px 10px;
+            font-size: 13px;
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+        }
+
+        .start .lanRoom span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .start .lanRoom button {
+            width: auto;
+            flex: none;
+            padding: 4px 12px;
+        }
+
         .start .more {
             width: 88%;
             font-size: 12px;
@@ -333,6 +375,16 @@
                     <button class="startBtn small" id="netCoopBtn">合作</button>
                     <button class="startBtn small" id="netVsBtn">竞争</button>
                 </div>
+
+                <div class="lanBox" id="lanBox" hidden>
+                    <div class="row">
+                        <button class="startBtn small" id="lanScanBtn">搜索房间</button>
+                        <button class="startBtn small" id="lanHostBtn">开个房间</button>
+                    </div>
+                    <div class="tip" id="lanMsg">同一个 Wi-Fi 下可以直接互相搜到</div>
+                    <div class="lanList" id="lanList"></div>
+                </div>
+                <div class="tip" id="netManualTip" hidden>—— 或者手动交换连接码 ——</div>
                 <textarea id="netCode" spellcheck="false" placeholder="连接码会出现在这里；对方发来的码也粘贴到这里"></textarea>
                 <div class="row">
                     <button class="startBtn small" id="netCopyBtn">复制</button>
@@ -646,6 +698,10 @@
             const netVerEl = document.getElementById('netVer');
             const netCodeEl = document.getElementById('netCode');
             const netIceEl = document.getElementById('netIce');
+            const lanBoxEl = document.getElementById('lanBox');
+            const lanMsgEl = document.getElementById('lanMsg');
+            const lanListEl = document.getElementById('lanList');
+            const netManualTipEl = document.getElementById('netManualTip');
             const netPeerIpEl = document.getElementById('netPeerIp');
             const netHostBtnEl = document.getElementById('netHostBtn');
             const netGuestBtnEl = document.getElementById('netGuestBtn');
@@ -1519,6 +1575,7 @@
 
             // 回到开始面板（Esc 或开局时）
             function showMenu() {
+                lanClearRoom();
                 netLeave();
                 reset();               // 用当前模式的场地当背景
                 state = 'menu';
@@ -1685,7 +1742,7 @@
 
             // 等 ICE 收集完成再出码 —— 提前出码会让码里缺公网候选，跨网直接打不通。
             // 返回是否真的收集完了（超时返回 false，界面上要提示重试）。
-            function netWaitIce(pc) {
+            function netWaitIce(pc, maxMs) {
                 return new Promise(function (resolve) {
                     if (pc.iceGatheringState === 'complete') { resolve(true); return; }
 
@@ -1696,7 +1753,7 @@
                         clearTimeout(timer);
                         resolve(ok);
                     }
-                    const timer = setTimeout(function () { finish(false); }, NET_GATHER_MS);
+                    const timer = setTimeout(function () { finish(false); }, maxMs || NET_GATHER_MS);
                     pc.addEventListener('icegatheringstatechange', function () {
                         if (pc.iceGatheringState === 'complete') finish(true);
                     });
@@ -3154,6 +3211,169 @@
                 togglePause();
             });
 
+            // ------------------------------ 局域网房间 ------------------------------
+            // 桌面版（Tauri 壳）里，Rust 侧内嵌了信令服务 + UDP 广播探测，所以「搜索房间」
+            // 是真能用的。纯浏览器里拿不到原生桥，这整块直接隐藏，联机走上面的手动连接码 ——
+            // 也就是说前端核心逻辑一行都不用为它改。
+            const NATIVE = (typeof window !== 'undefined' && window.__TAURI__ && window.__TAURI__.core)
+                ? window.__TAURI__.core : null;
+
+            let lanBase = null;    // 本地信令服务地址
+            let lanRoom = null;    // 我开的房间 id
+            let lanPoll = null;    // 主机轮询应答码的定时器
+
+            function lanApi(base, path, body) {
+                const opt = (body === undefined)
+                    ? { cache: 'no-store' }
+                    : { method: 'POST', body: JSON.stringify(body) };
+                return fetch(base + path, opt).then(function (r) {
+                    return r.json().catch(function () { return {}; }).then(function (j) {
+                        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                        return j;
+                    });
+                });
+            }
+
+            async function lanOwnBase() {
+                if (lanBase) return lanBase;
+                const info = await NATIVE.invoke('lan_start');
+                lanBase = info.url;
+                return lanBase;
+            }
+
+            function lanStopPolling() {
+                if (lanPoll) { clearInterval(lanPoll); lanPoll = null; }
+            }
+
+            function lanClearRoom() {
+                lanStopPolling();
+                if (lanRoom && lanBase) {
+                    lanApi(lanBase, '/api/close', { id: lanRoom }).catch(function () { });
+                }
+                lanRoom = null;
+            }
+
+            // 搜索：Rust 侧广播一发，再逐台问房间列表
+            async function lanScan() {
+                if (!NATIVE) return;
+                lanMsgEl.textContent = '正在搜索…';
+                lanListEl.innerHTML = '';
+                try {
+                    const peers = await NATIVE.invoke('lan_discover', { timeoutMs: 1500 });
+                    const rows = [];
+                    for (const p of peers) {
+                        let info = null;
+                        try { info = await lanApi(p.url, '/api/rooms'); } catch (e) { continue; }
+                        for (const r of (info.rooms || [])) {
+                            rows.push({ url: p.url, host: info.host || p.name, room: r });
+                        }
+                    }
+                    lanRenderRooms(rows);
+                } catch (e) {
+                    lanMsgEl.textContent = '搜索失败：' + e.message;
+                }
+            }
+
+            function lanRenderRooms(rows) {
+                lanListEl.innerHTML = '';
+                if (!rows.length) {
+                    lanMsgEl.textContent = '没搜到房间 —— 让对方点一下右上角的「开个房间」再搜';
+                    return;
+                }
+                lanMsgEl.textContent = '搜到 ' + rows.length + ' 个房间，点「加入」直接开局';
+                for (const row of rows) {
+                    const div = document.createElement('div');
+                    div.className = 'lanRoom';
+                    const span = document.createElement('span');
+                    span.textContent = row.host + ' · ' + row.room.name + (row.room.taken ? '（已满）' : '');
+                    const btn = document.createElement('button');
+                    btn.className = 'startBtn small';
+                    btn.textContent = '加入';
+                    btn.disabled = !!row.room.taken;
+                    btn.addEventListener('click', function () { lanJoin(row.url, row.room.id); });
+                    div.appendChild(span);
+                    div.appendChild(btn);
+                    lanListEl.appendChild(div);
+                }
+            }
+
+            // 开房：先照常造 offer，挂到本地信令服务上，然后轮询问答码
+            async function lanOpenRoom() {
+                if (netBusy) return;
+                netBusy = true;
+                try {
+                    const base = await lanOwnBase();
+                    lanMsgEl.textContent = '正在开房间…';
+
+                    netLeave();
+                    netRole = 'host';
+                    netPC = new RTCPeerConnection({ iceServers: netIceServers() });
+                    netWatchIce(netPC);
+                    netDC = netPC.createDataChannel('snake', { ordered: true });
+                    netBindChannel(netDC);
+                    await netPC.setLocalDescription(await netPC.createOffer());
+                    // 同一个局域网用不着公网候选，等 2.5 秒就够，别让人干等
+                    await netWaitIce(netPC, 2500);
+
+                    const made = await lanApi(base, '/api/room',
+                        { offer: netEncode(netPC.localDescription.sdp, 'offer') });
+                    lanRoom = made.id;
+                    netSetStatus('房间开好了', '等对方在「搜索房间」里看到你，点一下就开局');
+                    lanMsgEl.textContent = '房间里已有 1 人（你），等对方加入…';
+
+                    lanStopPolling();
+                    lanPoll = setInterval(async function () {
+                        if (!lanRoom || netOpen) { lanStopPolling(); return; }
+                        try {
+                            const r = await lanApi(base, '/api/answer?id=' + encodeURIComponent(lanRoom));
+                            if (!r.answer) return;
+                            lanStopPolling();
+                            const d = netDecode(r.answer, 'answer');
+                            await netPC.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+                            netSetStatus('对方已加入，正在打洞…', '通道一开就自动开局');
+                            lanMsgEl.textContent = '对方已加入 ✅';
+                            netStartConnectTimer();
+                        } catch (e) { /* 房间还没人应答，继续轮询 */ }
+                    }, 700);
+                } catch (e) {
+                    lanMsgEl.textContent = '开房失败：' + e.message;
+                }
+                netBusy = false;
+            }
+
+            // 加入：取 offer -> 造 answer -> 递回主机
+            async function lanJoin(base, id) {
+                try {
+                    lanMsgEl.textContent = '正在取房间信息…';
+                    const info = await lanApi(base, '/api/offer?id=' + encodeURIComponent(id));
+                    const d = netDecode(info.offer, 'offer');
+
+                    netLeave();
+                    netRole = 'guest';
+                    netPC = new RTCPeerConnection({ iceServers: netIceServers() });
+                    netWatchIce(netPC);
+                    netPC.addEventListener('datachannel', function (ev) {
+                        netDC = ev.channel;
+                        netBindChannel(netDC);
+                    });
+                    await netPC.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+                    await netPC.setLocalDescription(await netPC.createAnswer());
+                    await netWaitIce(netPC, 2500);
+                    await lanApi(base, '/api/answer',
+                        { id: id, answer: netEncode(netPC.localDescription.sdp, 'answer') });
+
+                    netSetStatus('已把应答递回主机', '通道一开就自动开局');
+                    lanMsgEl.textContent = '已加入，等待连接…';
+                    netStartConnectTimer();
+                } catch (e) {
+                    lanMsgEl.textContent = '加入失败：' + e.message;
+                }
+            }
+
+            if (NATIVE) {
+                document.getElementById('lanScanBtn').addEventListener('click', lanScan);
+                document.getElementById('lanHostBtn').addEventListener('click', lanOpenRoom);
+            }
             startBtnNetEl.addEventListener('click', function () {
                 startPanelEl.hidden = true;
                 netPanelEl.hidden = false;
@@ -3161,6 +3381,11 @@
                 netUseBtnEl.disabled = true;
                 netUseBtnEl.textContent = '用这段码';
                 netSetTeam(teamMode);
+                // 只有桌面版（Rust 侧在监听）才有「搜索房间」；纯浏览器里整块隐藏
+                lanBoxEl.hidden = !NATIVE;
+                netManualTipEl.hidden = !NATIVE;
+                lanListEl.innerHTML = '';
+                lanMsgEl.textContent = '同一个 Wi-Fi 下可以直接互相搜到';
                 netVerEl.textContent = '程序版本 v' + APP_VERSION + '（两边必须一致，否则直接拒绝连接）';
                 netSetStatus('先选角色：主机负责开局，客机负责应答', '主机点「我是主机」生成连接码');
             });
