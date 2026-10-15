@@ -114,19 +114,58 @@
             box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
         }
 
-        /* 开始面板：盖在棋盘上让人先选模式 */
+        /* 开始 / 联机面板：贴视口的浮层。
+           以前用 absolute + inset:0 挂在 .stage 上，棋盘只有 300px 高，
+           面板内容一长（联机面板 363px）就被 .stage 的 overflow:hidden 切掉，
+           标题和「返回」都点不到。改成 fixed 就脱离裁剪了，再加纵向滚动兜底。 */
         .start {
-            position: absolute;
+            position: fixed;
             inset: 0;
+            z-index: 50;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
             gap: 10px;
-            background: rgba(0, 0, 0, 0.62);
+            padding: 22px 16px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.72);
             color: #fff;
             line-height: 1.4;
             font-size: 14px;
+        }
+
+        /* 两个会收缩的弹性空位：有空间就垂直居中，内容超长就从顶部开始滚。
+           直接用 justify-content: center 的话溢出时会把顶部切掉。 */
+        .start::before,
+        .start::after {
+            content: '';
+            margin: auto;
+        }
+
+        .start .more {
+            width: 88%;
+            font-size: 12px;
+            opacity: 0.8;
+            text-align: left;
+        }
+
+        .start .more summary {
+            cursor: pointer;
+            text-align: center;
+            opacity: 0.9;
+        }
+
+        .start .more div {
+            margin-top: 6px;
+            line-height: 1.5;
+        }
+
+        .start .more code {
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 11px;
+            padding: 1px 3px;
+            background: rgba(255, 255, 255, 0.14);
+            border-radius: 3px;
         }
 
         .start[hidden] {
@@ -300,12 +339,18 @@
                     <button class="startBtn small" id="netUseBtn" disabled>用这段码</button>
                 </div>
                 <div class="tip" id="netHint">主机：点「我是主机」生成连接码</div>
-                <div class="tip" id="netTurn">跨网连不上？公共免费 TURN 基本都失效了，
-                    需要自建一个（coturn）或买一个，把地址按 turn:主机:端口|用户名|密码 填到上面</div>
+                <details class="more">
+                    <summary>跨网连不上怎么办？</summary>
+                    <div>
+                        公共免费 TURN 基本都失效了，得自建（coturn）或买一个商业 TURN，
+                        按 <code>turn:主机:端口|用户名|密码</code> 填到上面的「ICE 服务器」框里。
+                        同一个 Wi-Fi 下则直接填对方的局域网 IP 就行。
+                    </div>
+                </details>
                 <input id="netIce" class="netIce" spellcheck="false"
-                       placeholder="ICE 服务器（留空用内置 STUN；要中继就填 turn:主机:端口|用户名|密码）" />
+                       placeholder="ICE 服务器（可留空）" />
                 <input id="netPeerIp" class="netIce" spellcheck="false"
-                       placeholder="可选：对方的局域网 IP（同一个 Wi-Fi 却连不上时填这个，比如 192.168.1.23）" />
+                       placeholder="对方局域网 IP（可选，同 Wi-Fi 连不上时填）" />
                 <div class="tip" id="netVer"></div>
                 <div class="tip"><a href="#" id="netBack">← 返回模式选择</a></div>
             </div>
