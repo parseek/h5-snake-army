@@ -340,6 +340,74 @@
             display: block;
         }
 
+        /* 连上之后联机面板就没了，操作全收到这条状态条上 */
+        .netbar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0 0;
+            font-size: 13px;
+            color: #3f4653;
+        }
+
+        .netbar[hidden] {
+            display: none;
+        }
+
+        .netbar .who {
+            font-weight: 700;
+        }
+
+        .netbar .st {
+            color: #1f8a3b;
+        }
+
+        .netbar .note {
+            color: #8a6a3a;
+        }
+
+        .netbar .ask {
+            color: #b8620a;
+            font-weight: 700;
+        }
+
+        .miniBtn {
+            padding: 4px 10px;
+            font-size: 12px;
+            font-family: inherit;
+            color: #fff;
+            background: #7a5c3a;
+            border: 0;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .miniBtn:hover {
+            background: #8f6c44;
+        }
+
+        .miniBtn.ok {
+            background: #2f8f4c;
+        }
+
+        .miniBtn.ok:hover {
+            background: #37a55a;
+        }
+
+        .miniBtn.danger {
+            background: #a84545;
+        }
+
+        .miniBtn.danger:hover {
+            background: #bf5050;
+        }
+
+        .miniBtn[hidden] {
+            display: none;
+        }
+
         .operate {
             display: flex;
             flex-wrap: wrap;
@@ -475,6 +543,18 @@
                 <div class="tip" id="netVer"></div>
                 <div class="tip"><a href="#" id="netBack">← 返回模式选择</a></div>
             </div>
+        </div>
+
+        <div class="netbar" id="netBar" hidden>
+            <span class="who" id="netBarWho"></span>
+            <span class="st" id="netBarState"></span>
+            <span class="note" id="netBarNote"></span>
+            <button class="miniBtn" id="netBarPause" hidden>请求暂停</button>
+            <button class="miniBtn" id="netBarRestart" hidden>请求重开</button>
+            <span class="ask" id="netAskText" hidden></span>
+            <button class="miniBtn ok" id="netAskOk" hidden>同意</button>
+            <button class="miniBtn" id="netAskNo" hidden>忽略</button>
+            <button class="miniBtn danger" id="netBarLeave">退出连接</button>
         </div>
 
         <div class="operate">
@@ -1404,7 +1484,9 @@
 
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
                 ctx.font = '12px ' + FONT;
-                ctx.fillText('按空格 / 回车重新开始 · 按 Esc 回到模式选择', W / 2, H / 2 + 38);
+                ctx.fillText(netRole === 'guest'
+                    ? '等主机重开一局（也可以点上面的「请求重开」）· 按 Esc 断开连接'
+                    : '按空格 / 回车重新开始 · 按 Esc 回到模式选择', W / 2, H / 2 + 38);
             }
 
             function drawPauseOverlay() {
@@ -1640,6 +1722,8 @@
                 reset();
                 state = 'running';
                 last = performance.now();
+                netAsk = null;
+                syncNetBar();
             }
 
             // 回到开始面板（Esc 或开局时）
@@ -1861,12 +1945,18 @@
                         start(2, teamMode);      // 联机固定双人，主机负责开
                     } else {
                         netSetStatus('已连接 ✅', '对局进行中（画面由主机同步）');
+                        syncNetBar();
                     }
                     return;
                 }
 
                 if (netRole === 'guest') {
                     if (m.t === 'state') netApplySnapshot(m);
+                    else if (m.t === 'askOk') {
+                        netBarNote(m.ok
+                            ? (m.what === 'restart' ? '主机同意重开' : '主机同意暂停 / 继续')
+                            : '主机忽略了你的请求');
+                    }
                     return;
                 }
 
@@ -1876,10 +1966,88 @@
                     if (players[1]) turn(players[1], m.dir);
                 } else if (m.t === 'build') {
                     if (players[1]) players[1].buildRequested = true;
-                } else if (m.t === 'pause') {
-                    togglePause();
+                } else if (m.t === 'ask') {
+                    // 客机想暂停 / 重开，得主机点头才算 —— 这里只挂个提示
+                    netAsk = (m.what === 'restart') ? 'restart' : 'pause';
+                    syncNetBar();
+                    netBarNote('客机发来请求');
                 }
             }
+
+
+            // ------------------------------ 联机状态条 ------------------------------
+            // 连上以后联机面板就消失了，所以操作全部收拢到这条状态条：
+            //   * 主机和客机都能随时「退出连接」
+            //   * 客机不能自己暂停 / 重开，只能向主机发请求，由主机点「同意」才算数
+            let netAsk = null;         // 主机这边待处理的请求：'pause' | 'restart'
+            let netNoteTimer = null;
+
+            const netBarEl = document.getElementById('netBar');
+
+            function netBarNote(text, ms) {
+                const el = document.getElementById('netBarNote');
+                el.textContent = text || '';
+                if (netNoteTimer) clearTimeout(netNoteTimer);
+                if (text) netNoteTimer = setTimeout(function () { el.textContent = ''; }, ms || 4000);
+            }
+
+            function syncNetBar() {
+                if (!netBarEl) return;
+                netBarEl.hidden = !netOpen;
+                if (!netOpen) return;
+
+                const isGuest = netRole === 'guest';
+                document.getElementById('netBarWho').textContent =
+                    isGuest ? '联机中 · 我是客机' : '联机中 · 我是主机';
+                document.getElementById('netBarState').textContent =
+                    state === 'paused' ? '已暂停'
+                        : state === 'over' ? '本局结束'
+                            : state === 'running' ? '对局进行中' : '';
+
+                // 客机：只有「请求」按钮
+                const pauseBtn = document.getElementById('netBarPause');
+                pauseBtn.hidden = !isGuest;
+                pauseBtn.textContent = state === 'paused' ? '请求继续' : '请求暂停';
+                document.getElementById('netBarRestart').hidden = !isGuest;
+
+                // 主机：等客机的请求
+                const showAsk = !isGuest && !!netAsk;
+                document.getElementById('netAskText').hidden = !showAsk;
+                document.getElementById('netAskOk').hidden = !showAsk;
+                document.getElementById('netAskNo').hidden = !showAsk;
+                if (showAsk) {
+                    document.getElementById('netAskText').textContent =
+                        netAsk === 'restart' ? '客机请求重开一局' : '客机请求暂停 / 继续';
+                }
+            }
+
+            // 客机专用：向主机发请求
+            function netAskHost(what) {
+                if (!netOpen || netRole !== 'guest') return;
+                netSend({ t: 'ask', what: what });
+                netBarNote('已请求，等主机回应…');
+            }
+
+            document.getElementById('netBarPause').addEventListener('click', function () { netAskHost('pause'); });
+            document.getElementById('netBarRestart').addEventListener('click', function () { netAskHost('restart'); });
+            document.getElementById('netBarLeave').addEventListener('click', function () { showMenu(); });
+
+            document.getElementById('netAskOk').addEventListener('click', function () {
+                const what = netAsk;
+                netAsk = null;
+                if (what === 'restart') start(2, teamMode);
+                else togglePause();
+                netSend({ t: 'askOk', what: what, ok: true });
+                netBarNote('已同意客机的请求');
+                syncNetBar();
+            });
+
+            document.getElementById('netAskNo').addEventListener('click', function () {
+                netSend({ t: 'askOk', what: netAsk, ok: false });
+                netAsk = null;
+                netBarNote('已忽略客机的请求');
+                syncNetBar();
+            });
 
             async function netHostCreate() {
                 netLeave();
@@ -2099,6 +2267,7 @@
                 });
 
                 syncHud();
+                syncNetBar();     // 客机的状态条要跟着主机的状态走
             }
 
             function turn(p, name) {
@@ -2985,6 +3154,7 @@
                 else if (state === 'paused') state = 'running';
                 else return;                      // 结算画面按 P 不做事
                 syncPauseBtn();
+                syncNetBar();
             }
 
             // 身长不够 / 到上限时按钮变灰
@@ -3224,7 +3394,8 @@
                 // P：暂停 / 继续
                 if (key === 'p') {
                     ev.preventDefault();
-                    if (netRole === 'guest') netSend({ t: 'pause' });
+                    // 客机不能自己暂停，只能向主机请求
+                    if (netRole === 'guest') netAskHost('pause');
                     else togglePause();
                     return;
                 }
@@ -3244,16 +3415,22 @@
                     return;
                 }
 
-                // 空格：只在结算画面重开
+                // 空格：只在结算画面重开。客机不能自己重开，只能请求主机
                 if (key === ' ') {
                     ev.preventDefault();
-                    if (state === 'over') start();
+                    if (state === 'over') {
+                        if (netRole === 'guest') netAskHost('restart');
+                        else start();
+                    }
                     return;
                 }
 
                 if (key === 'Enter') {
                     ev.preventDefault();
-                    if (state === 'over') start();
+                    if (state === 'over') {
+                        if (netRole === 'guest') netAskHost('restart');
+                        else start();
+                    }
                 }
             }
 
@@ -3277,7 +3454,8 @@
             }
 
             pauseBtnEl.addEventListener('click', function () {
-                togglePause();
+                if (netRole === 'guest') netAskHost('pause');
+                else togglePause();
             });
 
             // ------------------------------ 局域网房间 ------------------------------
