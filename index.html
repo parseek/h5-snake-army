@@ -164,6 +164,46 @@
             background: rgba(255, 255, 255, 0.28);
         }
 
+        .startBtn.small {
+            width: 74px;
+            padding: 6px 0;
+            font-size: 13px;
+        }
+
+        .startBtn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        .startBtn.is-on {
+            background: rgba(255, 255, 255, 0.42);
+            border-color: #fff;
+        }
+
+        .start .row {
+            display: flex;
+            gap: 8px;
+            line-height: 1;
+        }
+
+        .start textarea {
+            width: 88%;
+            height: 84px;
+            padding: 6px;
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 11px;
+            color: #222;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 6px;
+            resize: none;
+            line-height: 1.35;
+        }
+
+        .start a {
+            color: #cfe8ff;
+        }
+
         canvas {
             display: block;
         }
@@ -227,7 +267,30 @@
                 <button class="startBtn" id="modeBtn1">单人游戏</button>
                 <button class="startBtn" id="modeBtnC">双人 · 合作</button>
                 <button class="startBtn" id="modeBtnV">双人 · 竞争</button>
+                <button class="startBtn" id="modeBtnNet">联机对战</button>
                 <div class="tip">也可以直接按 1 / 2 / 3</div>
+                <div class="tip" id="verLine"></div>
+            </div>
+
+            <div class="start" id="netPanel" hidden>
+                <div class="title">联机对战</div>
+                <div class="sub" id="netStatus">先选角色：主机负责开局，客机负责应答</div>
+                <div class="row">
+                    <button class="startBtn small" id="netHostBtn">我是主机</button>
+                    <button class="startBtn small" id="netGuestBtn">我是客机</button>
+                </div>
+                <div class="row">
+                    <button class="startBtn small" id="netCoopBtn">合作</button>
+                    <button class="startBtn small" id="netVsBtn">竞争</button>
+                </div>
+                <textarea id="netCode" spellcheck="false" placeholder="连接码会出现在这里；对方发来的码也粘贴到这里"></textarea>
+                <div class="row">
+                    <button class="startBtn small" id="netCopyBtn">复制</button>
+                    <button class="startBtn small" id="netUseBtn" disabled>用这段码</button>
+                </div>
+                <div class="tip" id="netHint">主机：点「我是主机」生成连接码</div>
+                <div class="tip" id="netVer"></div>
+                <div class="tip"><a href="#" id="netBack">← 返回模式选择</a></div>
             </div>
         </div>
 
@@ -243,6 +306,8 @@
 
         <p class="desc">
             玩法：开局先选「单人」或「本地双人」（按 1 / 2 也行）；
+            联机对战走 WebRTC 直连：主机点「我是主机」生成连接码发给对方，
+            对方点「我是客机」粘贴后生成应答码发回来，主机填进去即可开局（零服务器）；
             双人分「合作」和「竞争」：合作时队友出局后场上会出现粉色十字（✚），
             活着的人吃到就能把队友救回来；竞争时不能复活，炮塔会连对方一起打，先出局的一方输。
             双人同屏时 —— 🟢 P1 用方向键、🟠 P2 用 WASD，各自吃红色苹果（🍎）得分；
@@ -334,6 +399,15 @@
             const APPLE_MAX = 4;
             const APPLE_RAMP_SEC = 25;      // 每存活这么多秒 +1 个
             const APPLE_RAMP_SCORE = 4;     // 每吃这么多苹果 +1 个
+
+            // 联机（P2P，WebRTC 直连 + 手动交换连接码）
+            // 程序版本：联机双方必须一致。快照格式 / 玩法一变就把这个号往上加，
+            // 它会被写进连接码、握手时再对一次，不一致就直接拒掉而不是硬连。
+            const APP_VERSION = '1.0.0';
+            const NET_TAG = 'SNK';          // 连接码的 Magic
+            const NET_SEND_MS = 33;         // 主机发快照的间隔（约 30Hz）
+            const NET_CONNECT_MS = 20000;   // 打洞超时
+            const NET_STUN = 'stun:stun.l.google.com:19302';
 
             // 炮塔（消耗自身长度建造）
             const TURRET_COST = 2;          // 建一座塔消耗的身长（节）
@@ -482,15 +556,39 @@
             const buildBtnEls = [document.getElementById('buildBtn0'), document.getElementById('buildBtn1')];
             const pauseBtnEl = document.getElementById('pauseBtn');
             const startPanelEl = document.getElementById('startPanel');
+            document.getElementById('verLine').textContent = 'v' + APP_VERSION;
             const startBtnSingleEl = document.getElementById('modeBtn1');
             const startBtnCoopEl = document.getElementById('modeBtnC');
             const startBtnVsEl = document.getElementById('modeBtnV');
+            const startBtnNetEl = document.getElementById('modeBtnNet');
+            const netPanelEl = document.getElementById('netPanel');
+            const netStatusEl = document.getElementById('netStatus');
+            const netHintEl = document.getElementById('netHint');
+            const netVerEl = document.getElementById('netVer');
+            const netCodeEl = document.getElementById('netCode');
+            const netHostBtnEl = document.getElementById('netHostBtn');
+            const netGuestBtnEl = document.getElementById('netGuestBtn');
+            const netCoopBtnEl = document.getElementById('netCoopBtn');
+            const netVsBtnEl = document.getElementById('netVsBtn');
+            const netCopyBtnEl = document.getElementById('netCopyBtn');
+            const netUseBtnEl = document.getElementById('netUseBtn');
+            const netBackEl = document.getElementById('netBack');
 
             // ------------------------------ 状态 ------------------------------
             // 每位玩家一个对象：body/hp 是蛇身，dir 是下一步方向（与这段动画终点一致），
             // queue 缓存最多 2 个待生效方向，stepMs 是当前步长，coins/score 各自独立
             let players;
             let teamMode = 'coop';   // 双人玩法：'coop' | 'vs'
+
+            // ------------------------------ 联机 ------------------------------
+            // 主机权威：主机跑全部逻辑，客机只发按键、收状态做渲染
+            let netRole = null;    // null | 'host' | 'guest'
+            let netPC = null;      // RTCPeerConnection
+            let netDC = null;      // RTCDataChannel
+            let netOpen = false;
+            let netLastSend = 0;
+            let netBusy = false;
+            let netConnTimer = null;
             let reviveItem;          // 合作模式的复活道具 { x, y }，没有则 null
             let apples;         // 场上的苹果 [{ x, y }, ...]
             let powerUps;       // { speed: {x,y}|null, widen: {x,y}|null }
@@ -1340,10 +1438,352 @@
 
             // 回到开始面板（Esc 或开局时）
             function showMenu() {
+                netLeave();
                 reset();               // 用当前模式的场地当背景
                 state = 'menu';
                 startPanelEl.hidden = false;
+                netPanelEl.hidden = true;
                 syncPauseBtn();
+            }
+
+            // ------------------------------ 联机 ------------------------------
+            // 主机权威：主机跑全部逻辑（P1 本地操作、P2 收客机按键），客机只发按键、收状态渲染。
+            // 信令走"手动交换连接码"：零服务器、零依赖，代价是开局要复制粘贴两段码。
+            function netSetStatus(main, hint) {
+                if (main !== undefined) netStatusEl.textContent = main;
+                if (hint !== undefined) netHintEl.textContent = hint;
+            }
+
+            function netSend(obj) {
+                if (netDC && netOpen) {
+                    try { netDC.send(JSON.stringify(obj)); }
+                    catch (e) { /* 断了就算了，下一帧还会试 */ }
+                }
+            }
+
+            function netLeave() {
+                if (netDC) { try { netDC.close(); } catch (e) { } }
+                if (netPC) { try { netPC.close(); } catch (e) { } }
+                netDC = null;
+                netPC = null;
+                netOpen = false;
+                netRole = null;
+                netBusy = false;
+            }
+
+            // 连接码 = SNK#程序版本#角色#base64(SDP)。用 # 分隔是因为版本号里本来就有点。
+            // 前缀让"粘错码 / 版本不对"在本地就能认出来，不用等 WebRTC 抛一堆英文。
+            function netEncode(sdp, role) {
+                return NET_TAG + '#' + APP_VERSION + '#' + (role === 'offer' ? 'O' : 'A') + '#' + btoa(sdp);
+            }
+
+            function netDecode(code, wantRole) {
+                const s = String(code || '').replace(/\s+/g, '');
+                if (!s) throw new Error('EMPTY');
+
+                const parts = s.split('#');
+                if (parts.length !== 4 || parts[0] !== NET_TAG) throw new Error('FORMAT');
+
+                const role = (parts[2] === 'O') ? 'offer' : 'answer';
+                if (wantRole && role !== wantRole) throw new Error('ROLE:' + role);
+
+                // 角色先报错（更能指路），版本其次
+                if (parts[1] !== APP_VERSION) throw new Error('VERSION:' + parts[1]);
+
+                let sdp = '';
+                try { sdp = atob(parts[3]); } catch (e) { throw new Error('BASE64'); }
+                if (sdp.indexOf('v=0') !== 0) throw new Error('SDP');
+
+                return { role: role, sdp: sdp, version: parts[1] };
+            }
+
+            // 把上面那些错误码翻译成能看懂的话
+            function netExplain(e) {
+                const k = (e && e.message) || String(e);
+                if (k === 'EMPTY') return '框里还没有码 —— 先把对方发来的那段粘进来';
+                if (k === 'NO_HOST') return '请先点「我是主机」生成连接码，再来粘对方的应答码';
+                if (k === 'NO_GUEST') return '请先点「我是客机」，再来粘主机的连接码';
+                if (k === 'FORMAT') return '这段不是本游戏的连接码（应该以 ' + NET_TAG + '# 开头）';
+                if (k.indexOf('VERSION:') === 0) {
+                    return '程序版本不一致：对方 v' + k.slice(8) + '，本机 v' + APP_VERSION +
+                        ' —— 请两边都打开同一版的页面';
+                }
+                if (k === 'ROLE:offer') return '这是「主机码」，主机这边要粘的是对方发回来的「应答码」';
+                if (k === 'ROLE:answer') return '这是「应答码」，客机这边要粘的是主机发过来的「主机码」';
+                if (k === 'BASE64') return '这段码不完整（解不开），多半是复制时漏了尾巴，重新完整复制一次';
+                if (k === 'SDP') return '这段码解出来不是会话描述，可能把别的文字混进去了';
+                if (/Failed to set remote|Invalid SDP|Called in wrong state|m-line/i.test(k)) {
+                    return '这段码用不了：' + k;
+                }
+                return '出错了：' + k;
+            }
+
+            // 等 ICE 收集完再出码，否则候选不全连不上；但没网时也不能卡死
+            function netWaitIce(pc) {
+                return new Promise(function (resolve) {
+                    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+                    const timer = setTimeout(resolve, 3000);
+                    pc.addEventListener('icegatheringstatechange', function () {
+                        if (pc.iceGatheringState === 'complete') {
+                            clearTimeout(timer);
+                            resolve();
+                        }
+                    });
+                });
+            }
+
+            function netBindChannel(dc) {
+                dc.addEventListener('open', function () {
+                    netOpen = true;
+                    if (netConnTimer) { clearTimeout(netConnTimer); netConnTimer = null; }
+                    netSetStatus('通道已建立，正在握手…', '');
+                    netSend({ t: 'hello', v: APP_VERSION });    // 先对程序版本，再开局
+                });
+                dc.addEventListener('close', function () {
+                    netOpen = false;
+                    if (state !== 'menu') netSetStatus('连接已断开', '按 Esc 回到模式选择');
+                });
+                dc.addEventListener('message', function (ev) { netOnMessage(ev.data); });
+            }
+
+            function netOnMessage(raw) {
+                let m = null;
+                try { m = JSON.parse(raw); } catch (e) { return; }
+                if (!m) return;
+
+                // 握手：版本对不上就明确拒绝，不硬连
+                if (m.t === 'hello') {
+                    if (m.v !== APP_VERSION) {
+                        netSetStatus('程序版本不一致：对方 v' + m.v + '，本机 v' + APP_VERSION,
+                            '两边打开同一版页面再连');
+                        try { netDC.close(); } catch (e) { }
+                        return;
+                    }
+                    if (netRole === 'host') {
+                        netSetStatus('已连接 ✅', '对局开始');
+                        start(2, teamMode);      // 联机固定双人，主机负责开
+                    } else {
+                        netSetStatus('已连接 ✅', '对局进行中（画面由主机同步）');
+                    }
+                    return;
+                }
+
+                if (netRole === 'guest') {
+                    if (m.t === 'state') netApplySnapshot(m);
+                    return;
+                }
+
+                // 主机：把客机的操作喂给 P2
+                if (!players) return;
+                if (m.t === 'dir') {
+                    if (players[1]) turn(players[1], m.dir);
+                } else if (m.t === 'build') {
+                    if (players[1]) players[1].buildRequested = true;
+                } else if (m.t === 'pause') {
+                    togglePause();
+                }
+            }
+
+            async function netHostCreate() {
+                netLeave();
+                netRole = 'host';
+                netPC = new RTCPeerConnection({ iceServers: [{ urls: NET_STUN }] });
+                netDC = netPC.createDataChannel('snake', { ordered: true });
+                netBindChannel(netDC);
+
+                await netPC.setLocalDescription(await netPC.createOffer());
+                await netWaitIce(netPC);
+
+                netCodeEl.value = netEncode(netPC.localDescription.sdp, 'offer');
+                netSetStatus('① 把下面的连接码发给对方',
+                    '本机 v' + APP_VERSION + '；② 对方发回应答码后，粘贴到框里点「接受应答码」');
+                netUseBtnEl.disabled = false;
+                netUseBtnEl.textContent = '接受应答码';
+            }
+
+            async function netHostAcceptAnswer() {
+                if (!netPC || netRole !== 'host') throw new Error('NO_HOST');
+                const d = netDecode(netCodeEl.value, 'answer');
+                await netPC.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+                netSetStatus('已收到应答码，正在打洞…',
+                    '对方程序版本 v' + d.version + '，与本机一致 ✓');
+                netUseBtnEl.disabled = true;
+                netStartConnectTimer();
+            }
+
+            async function netGuestAcceptOffer() {
+                if (netRole !== 'guest') throw new Error('NO_GUEST');
+                const d = netDecode(netCodeEl.value, 'offer');
+                netLeave();
+                netRole = 'guest';
+                netPC = new RTCPeerConnection({ iceServers: [{ urls: NET_STUN }] });
+                netPC.addEventListener('datachannel', function (ev) {
+                    netDC = ev.channel;
+                    netBindChannel(netDC);
+                });
+
+                await netPC.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+                await netPC.setLocalDescription(await netPC.createAnswer());
+                await netWaitIce(netPC);
+
+                netCodeEl.value = netEncode(netPC.localDescription.sdp, 'answer');
+                netSetStatus('② 把下面的应答码发回给主机',
+                    '本机 v' + APP_VERSION + '，对方 v' + d.version + ' ✓；主机填进去就开局');
+                netUseBtnEl.disabled = true;
+                netStartConnectTimer();
+            }
+
+            // 打洞迟迟不通就说清楚，别让人干等
+            function netStartConnectTimer() {
+                if (netConnTimer) clearTimeout(netConnTimer);
+                netConnTimer = setTimeout(function () {
+                    netConnTimer = null;
+                    if (!netOpen) {
+                        netSetStatus('打洞超时了',
+                            '可能是网络不通：试试两边接同一个 Wi-Fi，或确认浏览器允许联机');
+                    }
+                }, NET_CONNECT_MS);
+            }
+
+            function netSetTeam(tm) {
+                teamMode = tm;
+                netCoopBtnEl.classList.toggle('is-on', tm === 'coop');
+                netVsBtnEl.classList.toggle('is-on', tm === 'vs');
+            }
+
+            // ------------------------------ 联机：状态打包 ------------------------------
+            function netPackBody(b) {
+                const a = [];
+                for (let i = 0; i < b.length; i++) a.push(b[i].x, b[i].y);
+                return a;
+            }
+
+            function netUnpackBody(a) {
+                const b = [];
+                for (let i = 0; i < a.length; i += 2) b.push({ x: a[i], y: a[i + 1] });
+                return b;
+            }
+
+            function netRound(v) { return Math.round(v * 100) / 100; }
+
+            // 主机 -> 客机：把渲染需要的一切打包（客机不跑逻辑，只照着重画）
+            function netSnapshot() {
+                return {
+                    t: 'state',
+                    now: Math.round(gameNow),
+                    st: state,
+                    cols: COLS, rows: ROWS,
+                    w: W, h: H,
+                    ox: Math.round(renderOffsetX), oy: Math.round(renderOffsetY),
+                    wid: widenStartAt ? Math.round(widenStartAt) : 0,
+                    wfc: widenFromCols, wfr: widenFromRows,
+                    mode: mode, team: teamMode, best: best,
+                    pl: players.map(function (p, i) {
+                        return {
+                            i: i,
+                            b: netPackBody(p.body),
+                            hp: p.hp.map(netRound),
+                            d: p.dir, q: p.queue,
+                            acc: netRound(p.acc), sm: p.stepMs,
+                            bu: p.boostUntil ? Math.round(p.boostUntil) : 0,
+                            c: p.coins, s: p.score,
+                            sa: Math.round(p.spawnAt),
+                            al: p.alive
+                        };
+                    }),
+                    en: enemies.map(function (e) {
+                        return {
+                            k: e.kind, b: netPackBody(e.body),
+                            hp: e.hp.map(netRound),
+                            d: e.dir, acc: netRound(e.acc), sm: e.stepMs,
+                            bu: e.boostUntil ? Math.round(e.boostUntil) : 0,
+                            sa: Math.round(e.spawnAt)
+                        };
+                    }),
+                    ap: apples.map(function (a) { return [a.x, a.y]; }),
+                    pw: {
+                        speed: powerUps.speed ? [powerUps.speed.x, powerUps.speed.y] : null,
+                        widen: powerUps.widen ? [powerUps.widen.x, powerUps.widen.y] : null
+                    },
+                    pr: {
+                        speed: Math.round(powerRespawnAt.speed || 0),
+                        widen: Math.round(powerRespawnAt.widen || 0)
+                    },
+                    rv: reviveItem ? [reviveItem.x, reviveItem.y] : null,
+                    dr: drops.map(function (d) { return [d.x, d.y, d.kind === 'len' ? 1 : 0, Math.round(d.expireAt)]; }),
+                    tu: turrets.map(function (t) {
+                        return [t.x, t.y, players.indexOf(t.owner), Math.round(t.cooldownUntil)];
+                    }),
+                    bl: bullets.map(function (b) { return [netRound(b.x), netRound(b.y), b.from === 'enemy' ? 1 : 0]; }),
+                    co: corpses.map(function (c) {
+                        return [netPackBody(c.body), c.hp, c.dir, Math.round(c.diedAt),
+                                c.loot ? 1 : 0, c.bodyColor, c.headColor];
+                    })
+                };
+            }
+
+            // 客机：把快照铺回本地状态，之后照常 render()，画法完全复用
+            function netApplySnapshot(m) {
+                gameNow = m.now;
+                nowRef = gameNow;
+                state = m.st;
+                mode = m.mode;
+                teamMode = m.team;
+                best = m.best;
+
+                if (COLS !== m.cols || ROWS !== m.rows || W !== m.w || H !== m.h) {
+                    COLS = m.cols;
+                    ROWS = m.rows;
+                    setCanvasSize(m.w, m.h);
+                }
+                renderOffsetX = m.ox;
+                renderOffsetY = m.oy;
+                widenStartAt = m.wid;
+                widenFromCols = m.wfc;
+                widenFromRows = m.wfr;
+
+                players = m.pl.map(function (p) {
+                    return {
+                        def: PLAYER_DEFS[p.i],
+                        body: netUnpackBody(p.b), hp: p.hp, dir: p.d, queue: p.q,
+                        acc: p.acc, stepMs: p.sm, boostUntil: p.bu,
+                        coins: p.c, score: p.s, spawnAt: p.sa, alive: p.al,
+                        buildRequested: false
+                    };
+                });
+
+                enemies = m.en.map(function (e) {
+                    return {
+                        kind: e.k, body: netUnpackBody(e.b), hp: e.hp, dir: e.d,
+                        acc: e.acc, stepMs: e.sm, baseStepMs: e.sm, boostUntil: e.bu,
+                        spawnAt: e.sa, shootAt: 0
+                    };
+                });
+
+                apples = m.ap.map(function (a) { return { x: a[0], y: a[1] }; });
+                powerUps = {
+                    speed: m.pw.speed ? { x: m.pw.speed[0], y: m.pw.speed[1] } : null,
+                    widen: m.pw.widen ? { x: m.pw.widen[0], y: m.pw.widen[1] } : null
+                };
+                powerRespawnAt = { speed: m.pr.speed, widen: m.pr.widen };
+                reviveItem = m.rv ? { x: m.rv[0], y: m.rv[1] } : null;
+                drops = m.dr.map(function (d) {
+                    return { x: d[0], y: d[1], kind: d[2] ? 'len' : 'coin', expireAt: d[3] };
+                });
+                turrets = m.tu.map(function (t) {
+                    return { x: t[0], y: t[1], cooldownUntil: t[3], owner: players[t[2]] || players[0] };
+                });
+                bullets = m.bl.map(function (b) {
+                    return { x: b[0], y: b[1], vx: 0, vy: 0, from: b[2] ? 'enemy' : 'player' };
+                });
+                corpses = m.co.map(function (c) {
+                    return {
+                        body: netUnpackBody(c[0]), hp: c[1], dir: c[2],
+                        diedAt: c[3], loot: !!c[4], bodyColor: c[5], headColor: c[6]
+                    };
+                });
+
+                syncHud();
             }
 
             function turn(p, name) {
@@ -2255,10 +2695,50 @@
             }
 
             // ------------------------------ 主循环 ------------------------------
+            // 客机的心跳：不跑任何逻辑，只把主机时钟往前推一点然后重画
+            function guestTick(dtMs) {
+                if (state !== 'paused') gameNow += dtMs;
+                nowRef = gameNow;
+
+                // 两次快照之间本地补一点插值，画面才不会一格一格跳
+                if (state === 'running') {
+                    for (let i = 0; i < players.length; i++) {
+                        const p = players[i];
+                        if (p.alive) p.acc = Math.min(p.acc + dtMs, p.stepMs);
+                    }
+                    for (let i = 0; i < enemies.length; i++) {
+                        const en = enemies[i];
+                        en.acc = Math.min(en.acc + dtMs, en.stepMs);
+                    }
+                }
+
+                if (widenStartAt) {
+                    const t = Math.min(1, (gameNow - widenStartAt) / WIDEN_ANIM_MS);
+                    applyWidenFrame(ease(t));
+                    if (t >= 1) {
+                        widenStartAt = 0;
+                        resizeCanvas();
+                    }
+                }
+
+                syncBoostHud(gameNow);
+                syncEnemyHud(gameNow);
+                syncBuildBtn();
+                syncPauseBtn();
+                render();
+                requestAnimationFrame(frame);
+            }
+
             function frame(rawNow) {
                 // 单帧最多按 200ms 计：切后台回来子弹不会瞬移
                 const dtMs = Math.max(0, Math.min(rawNow - last, 200));
                 last = rawNow;
+
+                // 客机：所有逻辑都在主机那边跑，这边只画
+                if (netRole === 'guest') {
+                    guestTick(dtMs);
+                    return;
+                }
 
                 // 暂停时游戏时钟停走：道具重生、加速剩余、敌人开火冷却、
                 // 掉落消失、自愈……全都挂在这个时钟上，不会被暂停白白耗掉
@@ -2378,6 +2858,12 @@
                     }
                 }
 
+                // 主机：按约 30Hz 把状态推给客机
+                if (netRole === 'host' && netOpen && gameNow - netLastSend >= NET_SEND_MS) {
+                    netLastSend = gameNow;
+                    netSend(netSnapshot());
+                }
+
                 syncBoostHud(now);
                 syncEnemyHud(now);
                 syncBuildBtn();
@@ -2392,6 +2878,7 @@
 
                 // 面板上：1 / 2 直接选模式
                 if (state === 'menu') {
+                    if (!netPanelEl.hidden) return;   // 联机面板上别误触数字键
                     if (key === '1') { ev.preventDefault(); start(1); }
                     else if (key === '2') { ev.preventDefault(); start(2, 'coop'); }
                     else if (key === '3') { ev.preventDefault(); start(2, 'vs'); }
@@ -2405,35 +2892,40 @@
                     return;
                 }
 
-                // P1 用方向键，P2 用 WASD
+                // P1 用方向键，P2 用 WASD。
+                // 联机时：客机的 WASD 变成网络输入，主机本地的 WASD 不再抢 P2
                 if (KEYMAP_P1[key]) {
                     ev.preventDefault();
-                    turn(players[0], KEYMAP_P1[key]);
+                    if (netRole !== 'guest') turn(players[0], KEYMAP_P1[key]);
                     return;
                 }
                 if (KEYMAP_P2[key]) {
                     ev.preventDefault();
-                    turn(players[1], KEYMAP_P2[key]);
+                    if (netRole === 'guest') netSend({ t: 'dir', dir: KEYMAP_P2[key] });
+                    else if (netRole !== 'host') turn(players[1], KEYMAP_P2[key]);
                     return;
                 }
 
                 // P：暂停 / 继续
                 if (key === 'p') {
                     ev.preventDefault();
-                    togglePause();
+                    if (netRole === 'guest') netSend({ t: 'pause' });
+                    else togglePause();
                     return;
                 }
 
                 // 建塔键：P1 用 /，P2 用 Q
                 if (state === 'running' && key === '/') {
                     ev.preventDefault();
-                    players[0].buildRequested = true;
+                    if (netRole === 'guest') netSend({ t: 'build' });
+                    else players[0].buildRequested = true;
                     return;
                 }
 
                 if (state === 'running' && key === 'q') {
                     ev.preventDefault();
-                    if (players[1]) players[1].buildRequested = true;
+                    if (netRole === 'guest') netSend({ t: 'build' });
+                    else if (netRole !== 'host' && players[1]) players[1].buildRequested = true;
                     return;
                 }
 
@@ -2471,6 +2963,74 @@
 
             pauseBtnEl.addEventListener('click', function () {
                 togglePause();
+            });
+
+            startBtnNetEl.addEventListener('click', function () {
+                startPanelEl.hidden = true;
+                netPanelEl.hidden = false;
+                netCodeEl.value = '';
+                netUseBtnEl.disabled = true;
+                netUseBtnEl.textContent = '用这段码';
+                netSetTeam(teamMode);
+                netVerEl.textContent = '程序版本 v' + APP_VERSION + '（两边必须一致，否则直接拒绝连接）';
+                netSetStatus('先选角色：主机负责开局，客机负责应答', '主机点「我是主机」生成连接码');
+            });
+
+            netBackEl.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                showMenu();
+            });
+
+            netCoopBtnEl.addEventListener('click', function () { netSetTeam('coop'); });
+            netVsBtnEl.addEventListener('click', function () { netSetTeam('vs'); });
+
+            netHostBtnEl.addEventListener('click', function () {
+                if (netBusy) return;
+                netBusy = true;
+                netSetStatus('正在生成连接码…', '要等 ICE 收集完，最多几秒');
+                netHostCreate().catch(function (e) {
+                    netSetStatus('出错了', netExplain(e));
+                }).then(function () { netBusy = false; });
+            });
+
+            netGuestBtnEl.addEventListener('click', function () {
+                netLeave();
+                netRole = 'guest';
+                netCodeEl.value = '';
+                netUseBtnEl.disabled = false;
+                netUseBtnEl.textContent = '生成应答码';
+                netSetStatus('把主机的连接码粘贴到下面', '然后点「生成应答码」');
+            });
+
+            netUseBtnEl.addEventListener('click', function () {
+                if (netRole === 'host') {
+                    netUseBtnEl.disabled = true;
+                    netHostAcceptAnswer().catch(function (e) {
+                        netSetStatus('这段码不能用', netExplain(e));
+                        netUseBtnEl.disabled = false;
+                    });
+                } else if (netRole === 'guest') {
+                    netUseBtnEl.disabled = true;
+                    netSetStatus('正在生成应答码…', '要等 ICE 收集完，最多几秒');
+                    netGuestAcceptOffer().catch(function (e) {
+                        netSetStatus('这段码不能用', netExplain(e));
+                        netUseBtnEl.disabled = false;
+                    });
+                } else {
+                    netSetStatus('先选角色', '主机点「我是主机」，客机点「我是客机」');
+                }
+            });
+
+            netCopyBtnEl.addEventListener('click', function () {
+                netCodeEl.focus();
+                netCodeEl.select();
+                let ok = false;
+                try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                if (!ok && navigator.clipboard) {
+                    navigator.clipboard.writeText(netCodeEl.value).catch(function () { });
+                    ok = true;
+                }
+                netHintEl.textContent = ok ? '已复制到剪贴板' : '复制失败，请手动 Ctrl+C';
             });
 
             startBtnSingleEl.addEventListener('click', function () { start(1); });
