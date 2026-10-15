@@ -129,6 +129,27 @@ CORS 在内嵌服务上已经开了 `*`。
 
 浏览器版只有「连接码」一种，类型选择器整个隐藏 —— 那两种都要原生侧才做得到。
 
+## 验证页面（重要：别按进程名杀浏览器）
+
+改完页面要跑一遍真实浏览器验证时，用这个：
+
+```bash
+# 先把 dist/ 服务出来
+python -m http.server 9211 --bind 127.0.0.1 --directory dist
+# 另开一个终端
+node scripts/smoke.mjs _probe.html --wait 6000
+```
+
+**规矩：收尾只能杀自己起的那个浏览器实例，绝不能按进程名杀。**
+```powershell
+Get-Process -Name 'msedge','msedgewebview2' | Stop-Process -Force   # ✗ 千万别这么写
+```
+这句会把用户自己的浏览器连同 Web UI 一起杀掉，表现就是「web ui 有时闪退」。
+
+`scripts/smoke.mjs` 的做法是：每个实例用独立的 `--user-data-dir`，
+收尾时只杀**命令行里带这个专属目录**的进程，并延迟再清一次（无头浏览器会拉一串子进程）。
+实测跑完前后 `msedge` 进程数完全不变。
+
 ## 目录
 
 ```
