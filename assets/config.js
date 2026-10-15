@@ -226,9 +226,8 @@
 
             resizeCanvas();
 
-            // HUD 玩家条目的生成（syncHudPlayers / hudEntries）留在 index.html：
-            // 它要读 players，而 players 是主脚本 IIFE 内部的变量，这里看不见。
-            const hudPlayersEl = document.getElementById('hudPlayers');
+            // hudPlayersEl 不在这里：它跟 syncHudPlayers 一起在 index.html。
+            // 声明两遍会在拆掉 IIFE 后直接报 Identifier 'hudPlayersEl' has already been declared。
             const bestEl = document.getElementById('best');
             const sizeEl = document.getElementById('size');
             const boostEl = document.getElementById('boost');

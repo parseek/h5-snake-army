@@ -638,8 +638,10 @@
     <script src="./assets/state.js"></script>
     <script src="./assets/net.js"></script>
     <script>
-        (function () {
-            'use strict';
+        // 之前这里套了一层 IIFE。现在拆掉：assets/ 下的脚本是全局的，如果这些函数
+        // 仍留在 IIFE 里，外部脚本就调用不到它们（实测报过 drawTurrets / enemyDef
+        // is not defined）。全部落到全局之后，跨文件互相调用没有任何问题。
+        'use strict';
 
             // ------------------------------ 配置 ------------------------------
             // 常量、配色、方向、键位、玩家定义、画布与元素引用都搬到了 assets/config.js。
@@ -3638,7 +3640,6 @@
                 last = now;   // 首帧不计时，避免刚开局就跳步
                 frame(now);
             });
-        })();
     </script>
 </body>
 
