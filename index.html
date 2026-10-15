@@ -81,8 +81,18 @@
             color: #5e2d80;
         }
 
-        /* 建造炮塔按钮 */
-        .operate .btn.build {
+        /* 两位玩家的 HUD 配色，和蛇身颜色对上 */
+        .hud .p1 b {
+            color: #146b14;
+        }
+
+        .hud .p2 b {
+            color: #a94f06;
+        }
+
+        /* 建造炮塔 / 暂停按钮 */
+        .operate .btn.build,
+        .operate .btn.pause {
             margin-top: 4px;
             height: 30px;
             font-size: 12px;
@@ -90,16 +100,68 @@
             color: #3f4653;
         }
 
-        .operate .btn.build.is-off {
+        .operate .btn.build.is-off,
+        .operate .btn.pause.is-off {
             opacity: 0.35;
             cursor: not-allowed;
         }
 
         .stage {
+            position: relative;
             line-height: 0;
             border-radius: 6px;
             overflow: hidden;
             box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+        }
+
+        /* 开始面板：盖在棋盘上让人先选模式 */
+        .start {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.62);
+            color: #fff;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+
+        .start[hidden] {
+            display: none;
+        }
+
+        .start .title {
+            font-size: 26px;
+            font-weight: 700;
+        }
+
+        .start .sub {
+            font-size: 13px;
+            opacity: 0.75;
+        }
+
+        .start .tip {
+            font-size: 12px;
+            opacity: 0.6;
+        }
+
+        .startBtn {
+            width: 160px;
+            padding: 9px 0;
+            font: inherit;
+            font-size: 14px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .startBtn:hover {
+            background: rgba(255, 255, 255, 0.28);
         }
 
         canvas {
@@ -110,7 +172,7 @@
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
-            width: 120px;
+            width: 156px;
             padding: 4px 0;
         }
 
@@ -149,16 +211,24 @@
 <body>
     <main class="game">
         <div class="hud">
-            <span>得分 <b id="score">0</b></span>
             <span>最高 <b id="best">0</b></span>
-            <span>场地 <b id="size">15×15</b></span>
-            <span>币 <b id="coins">0</b></span>
+            <span>场地 <b id="size">30×15</b></span>
+            <span class="p1">🟢 P1 <b id="score0">0</b> 分 · <b id="coins0">0</b> 币</span>
+            <span class="p2">🟠 P2 <b id="score1">0</b> 分 · <b id="coins1">0</b> 币</span>
             <span class="boost" id="boost" hidden>⚡ 加速 <b id="boostLeft">0</b>s</span>
             <span class="enemy" id="enemyTag" hidden>🐍 <b id="enemyLeft">0/1</b></span>
         </div>
 
         <div class="stage">
             <canvas id="board" aria-label="贪吃蛇棋盘"></canvas>
+            <div class="start" id="startPanel">
+                <div class="title">🐍 贪吃蛇</div>
+                <div class="sub">选择模式</div>
+                <button class="startBtn" id="modeBtn1">单人游戏</button>
+                <button class="startBtn" id="modeBtnC">双人 · 合作</button>
+                <button class="startBtn" id="modeBtnV">双人 · 竞争</button>
+                <div class="tip">也可以直接按 1 / 2 / 3</div>
+            </div>
         </div>
 
         <div class="operate">
@@ -166,16 +236,23 @@
             <div class="btn" data-dir="left">左</div>
             <div class="btn" data-dir="down">下</div>
             <div class="btn" data-dir="right">右</div>
-            <div class="btn build flex" id="buildBtn">建塔 · 身长 −2</div>
+            <div class="btn build flex" id="buildBtn0">P1 建塔 · 身长 −2</div>
+            <div class="btn build flex" id="buildBtn1">P2 建塔 · 身长 −2</div>
+            <div class="btn pause flex" id="pauseBtn">暂停</div>
         </div>
 
         <p class="desc">
-            玩法：用方向键 / WASD 或屏幕上的方向键，控制绿色蛇（🐍）吃掉红色苹果（🍎）得分；
+            玩法：开局先选「单人」或「本地双人」（按 1 / 2 也行）；
+            双人分「合作」和「竞争」：合作时队友出局后场上会出现粉色十字（✚），
+            活着的人吃到就能把队友救回来；竞争时不能复活，炮塔会连对方一起打，先出局的一方输。
+            双人同屏时 —— 🟢 P1 用方向键、🟠 P2 用 WASD，各自吃红色苹果（🍎）得分；
             吃到蓝色闪电（⚡）可在 30 秒内让步长减半，吃到金色箭头（⤢）可让场地上下左右各拓宽一格；
             紫色是敌人蛇，它也会抢苹果和闪电，撞到它即结束；
             红蛇生来就长（6 节），蓝蛇会朝你发射子弹（打中扣掉对应部位的血）；
             它阵亡后身体会原地掉成一地战利品：绿色 + 加身长，金币 + 加货币；
-            按空格（或点「建塔」）消耗 2 节身长 + 1 货币可原地造一座自动开火的炮塔。
+            P1 按 / 、P2 按 Q（或点各自的「建塔」）消耗 2 节身长 + 1 货币，可原地造一座自动开火的炮塔；
+            两位玩家的得分 / 货币 / 炮塔各自独立，撞到对方身体同样会出局，一位出局另一位继续玩；
+            按 P（或点「暂停」）可随时暂停，暂停期间所有计时都会一起停住。
         </p>
     </main>
 
@@ -187,10 +264,27 @@
             const CELL = 20;        // 每格边长（px）
             const STEP_MS = 500;    // 基础步长：每走一步的间隔
 
-            const START_COLS = 15;  // 初始场地宽（格）
-            const START_ROWS = 15;  // 初始场地高（格）
-            const MAX_COLS = 25;    // 场地拓宽上限，避免无限变大
-            const MAX_ROWS = 25;
+            // 两种模式：单人沿用原来的 15 宽场地，本地双人宽度翻倍
+            const MODES = {
+                1: { name: '单人',     cols: 15, rows: 15, maxCols: 25, maxRows: 25, count: 1 },
+                2: { name: '本地双人', cols: 30, rows: 15, maxCols: 40, maxRows: 25, count: 2 }
+            };
+            let mode = 1;       // 当前模式：1 = 单人，2 = 本地双人
+
+            // 双人再分两种玩法
+            //   合作：一位出局后场上留一个复活道具，活着的那位吃到就能把队友救回来
+            //   竞争：不能复活，炮塔会连对方一起打，先出局的一方输
+            const TEAM_MODES = {
+                coop: { name: '合作', revive: true,  friendlyFire: false },
+                vs:   { name: '竞争', revive: false, friendlyFire: true }
+            };
+            const REVIVE_LEN = 3;   // 复活出来时的身长
+            const REVIVE_GAP = 3;   // 复活道具至少离敌人这么远（曼哈顿距离）
+
+            let START_COLS = MODES[1].cols;   // 初始场地宽（格）
+            let START_ROWS = MODES[1].rows;   // 初始场地高（格）
+            let MAX_COLS = MODES[1].maxCols;  // 场地拓宽上限，避免无限变大
+            let MAX_ROWS = MODES[1].maxRows;
 
             // 加速道具（玩家和敌人蛇都能吃）
             const SPEED_FACTOR = 0.5;       // 拾取后步长乘以这个系数（0.5 = 快一倍）
@@ -296,6 +390,7 @@
                 turretCore: '#2b3340',  // 炮塔中心
                 bullet: '#ffd166',      // 子弹（玩家的炮塔）
                 enemyBullet: '#ff4d6d', // 敌方子弹，换个颜色好躲
+                revive: '#ff4fa3',      // 合作模式的复活道具
                 dropLen: '#14e0a0',     // 掉落：加身长
                 dropCoin: '#ffb703',    // 掉落：加货币
                 grid: 'rgba(0, 0, 0, 0.07)',
@@ -310,10 +405,17 @@
                 right: { x: 1, y: 0 }
             };
 
-            const KEYMAP = {
-                ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-                w: 'up', s: 'down', a: 'left', d: 'right'
+            // P1 用方向键（右手区），P2 用 WASD（左手区），互不打架
+            const KEYMAP_P1 = {
+                ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'
             };
+            const KEYMAP_P2 = { w: 'up', s: 'down', a: 'left', d: 'right' };
+
+            // 本地双人：P1 绿色从左边出发向右，P2 橙色从右边出发向左
+            const PLAYER_DEFS = [
+                { name: 'P1', body: '#008000', head: '#146b14', dir: 'right', buildKey: '/' },
+                { name: 'P2', body: '#e8720c', head: '#a94f06', dir: 'left', buildKey: 'Q' }
+            ];
 
             const BEST_KEY = 'snake.canvas.best';
             const FONT = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
@@ -369,41 +471,41 @@
 
             resizeCanvas();
 
-            const scoreEl = document.getElementById('score');
+            const scoreEls = [document.getElementById('score0'), document.getElementById('score1')];
+            const coinsEls = [document.getElementById('coins0'), document.getElementById('coins1')];
             const bestEl = document.getElementById('best');
-            const coinsEl = document.getElementById('coins');
             const sizeEl = document.getElementById('size');
             const boostEl = document.getElementById('boost');
             const boostLeftEl = document.getElementById('boostLeft');
             const enemyTagEl = document.getElementById('enemyTag');
             const enemyLeftEl = document.getElementById('enemyLeft');
-            const buildBtnEl = document.getElementById('buildBtn');
+            const buildBtnEls = [document.getElementById('buildBtn0'), document.getElementById('buildBtn1')];
+            const pauseBtnEl = document.getElementById('pauseBtn');
+            const startPanelEl = document.getElementById('startPanel');
+            const startBtnSingleEl = document.getElementById('modeBtn1');
+            const startBtnCoopEl = document.getElementById('modeBtnC');
+            const startBtnVsEl = document.getElementById('modeBtnV');
 
             // ------------------------------ 状态 ------------------------------
-            let snake;          // 蛇身坐标，头在数组首位
-            let snakeHp;        // 每节的生命值，按「从蛇头数第几节」对齐
-            let direction;      // 下一步要走的绝对方向（与当前这段动画的终点一致）
-            let queue;          // 待生效方向，最多缓存 2 个，避免快速连按丢键
+            // 每位玩家一个对象：body/hp 是蛇身，dir 是下一步方向（与这段动画终点一致），
+            // queue 缓存最多 2 个待生效方向，stepMs 是当前步长，coins/score 各自独立
+            let players;
+            let teamMode = 'coop';   // 双人玩法：'coop' | 'vs'
+            let reviveItem;          // 合作模式的复活道具 { x, y }，没有则 null
             let apples;         // 场上的苹果 [{ x, y }, ...]
             let powerUps;       // { speed: {x,y}|null, widen: {x,y}|null }
             let powerRespawnAt; // 各道具的重生时间点
-            let boostUntil;     // 加速结束的时间点，0 表示未加速
-            let stepMs;         // 当前步长（加速时 = STEP_MS * SPEED_FACTOR）
             let enemies;        // 敌人蛇数组 [{ body, dir, acc, stepMs, spawnAt, boostUntil }]
             let enemyRespawns;  // 待补位的重生时间点
             let runStartAt;     // 本局开始时间，用来爬难度
-            let coins;          // 货币
             let drops;          // 敌人尸体掉落物 [{ x, y, kind, expireAt }]
-            let corpses;        // 正在播阵亡动画的敌人 [{ body, hp, dir, diedAt, lootAt }]
-            let playerSpawnAt;  // 玩家出生动画起点
+            let corpses;        // 正在播阵亡动画的蛇 [{ body, hp, dir, diedAt, loot, bodyColor, headColor }]
             let nowRef;         // 本帧时间，画动画时用
-            let turrets;        // 炮塔 [{ x, y, cooldownUntil }]
+            let turrets;        // 炮塔 [{ x, y, cooldownUntil, owner }]
             let bullets;        // 子弹 [{ x, y, vx, vy }]，坐标是浮点格
-            let buildRequested; // 玩家按下了建塔
-            let score;
             let best = readBest();
-            let state = 'over'; // 'running' | 'over'
-            let acc = 0;        // 当前这一步已经过去的时间
+            let state = 'menu'; // 'menu' | 'running' | 'paused' | 'over'
+            let gameNow = 0;    // 游戏时钟：暂停时停走，所有玩法计时都以它为准
             let last = 0;       // 上一帧时间戳
 
             // ------------------------------ 存档 ------------------------------
@@ -446,17 +548,32 @@
             function cyOf(p) { return p.y * CELL + renderOffsetY + CELL / 2; }
 
             function syncHud() {
-                scoreEl.textContent = String(score);
                 bestEl.textContent = String(best);
                 sizeEl.textContent = COLS + '×' + ROWS;
-                coinsEl.textContent = String(coins);
+                for (let i = 0; i < players.length; i++) {
+                    scoreEls[i].textContent = String(players[i].score);
+                    coinsEls[i].textContent = String(players[i].coins);
+                }
+            }
+
+            // 难度爬升看两人里更高的那个分
+            function topScore() {
+                let s = 0;
+                for (let i = 0; i < players.length; i++) s = Math.max(s, players[i].score);
+                return s;
             }
 
             // 加速剩余时间：整秒向上取整，拾取瞬间显示满 30s
             function syncBoostHud(now) {
-                const left = (state === 'running' && boostUntil)
-                    ? Math.max(0, Math.ceil((boostUntil - now) / 1000))
-                    : 0;
+                // 暂停时也继续显示剩余时间（游戏时钟停着，所以读数是准的）；
+                // 两个人都有加速时，显示剩得久的那个
+                let left = 0;
+                if (state !== 'over') {
+                    for (let i = 0; i < players.length; i++) {
+                        const b = players[i].boostUntil;
+                        if (b) left = Math.max(left, Math.ceil((b - now) / 1000));
+                    }
+                }
                 if (left > 0) {
                     boostLeftEl.textContent = String(left);
                     boostEl.hidden = false;
@@ -466,14 +583,14 @@
             }
 
             // 换步长时按比例缩放已累积的时间，避免动画进度跳一下
-            function setStepMs(next) {
-                if (next === stepMs) return;
-                acc = acc * (next / stepMs);
-                stepMs = next;
+            function setStepMs(p, next) {
+                if (next === p.stepMs) return;
+                p.acc = p.acc * (next / p.stepMs);
+                p.stepMs = next;
             }
 
-            function boosted() {
-                return boostUntil > 0;
+            function boosted(p) {
+                return p.boostUntil > 0;
             }
 
             function canWiden() {
@@ -482,8 +599,8 @@
 
             // ------------------------------ 插值 ------------------------------
             // 当前这一步的进度 0~1，再套上缓动曲线
-            function progress() {
-                return ease(Math.max(0, Math.min(acc / stepMs, 1)));
+            function progress(p) {
+                return ease(Math.max(0, Math.min(p.acc / p.stepMs, 1)));
             }
 
             // 这一格有没有苹果（返回下标，没有则 -1）
@@ -499,9 +616,9 @@
             }
 
             // 下一步走过去会不会变长：苹果或「加身长」掉落物都算
-            function willGrowNext() {
-                const nx = snake[0].x + direction.x;
-                const ny = snake[0].y + direction.y;
+            function willGrowNext(p) {
+                const nx = p.body[0].x + p.dir.x;
+                const ny = p.body[0].y + p.dir.y;
                 if (willEatApple(nx, ny)) return true;
                 const d = dropIndexAt(nx, ny);
                 return d !== -1 && drops[d].kind === 'len';
@@ -826,27 +943,47 @@
                 ctx.restore();
             }
 
-            function drawSnake() {
-                const head = snake[0];
-                const s = spawnScale(playerSpawnAt, nowRef);
-                const pts = buildPath(snake, direction, progress(), state === 'running' && !willGrowNext());
+            function drawSnake(p) {
+                if (!p.alive || p.body.length === 0) return;
+
+                const head = p.body[0];
+                const s = spawnScale(p.spawnAt, nowRef);
+                const pts = buildPath(p.body, p.dir, progress(p), state === 'running' && !willGrowNext(p));
 
                 withSpawnScale(cxOf(head), cyOf(head), s, function () {
-                    if (boosted()) drawBoostGlow(pts, COLOR.body);
-                    strokeSnake(pts, snake, snakeHp, COLOR.body, COLOR.head, direction);
+                    if (boosted(p)) drawBoostGlow(pts, p.def.body);
+                    strokeSnake(pts, p.body, p.hp, p.def.body, p.def.head, p.dir);
                 });
             }
 
             // 阵亡动画：每一节各自绕自己的中点「缓入」缩到 0
+            // 合作模式的复活道具：粉色圆底 + 白十字，一眼看出是救人的
+            function drawReviveItem() {
+                if (!reviveItem) return;
+
+                const cx = cxOf(reviveItem);
+                const cy = cyOf(reviveItem);
+                const r = CELL * 0.36;
+
+                ctx.fillStyle = COLOR.revive;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#ffffff';
+                const w = r * 0.34;
+                ctx.fillRect(cx - w / 2, cy - r * 0.6, w, r * 1.2);
+                ctx.fillRect(cx - r * 0.6, cy - w / 2, r * 1.2, w);
+            }
+
             function drawCorpses() {
                 for (let i = 0; i < corpses.length; i++) {
                     const c = corpses[i];
                     const t = Math.min(1, (nowRef - c.diedAt) / DEATH_ANIM_MS);
                     if (t >= 1 || c.body.length === 0) continue;
 
-                    const def = enemyDef(c);
                     const pts = buildPath(c.body, c.dir, 0, false);
-                    strokeSnake(pts, c.body, c.hp, def.body, def.head, c.dir,
+                    strokeSnake(pts, c.body, c.hp, c.bodyColor, c.headColor, c.dir,
                         1 - easeInCubic(t));
                 }
             }
@@ -942,14 +1079,44 @@
 
                 ctx.fillStyle = COLOR.text;
                 ctx.font = 'bold 22px ' + FONT;
-                ctx.fillText('游戏结束', W / 2, H / 2 - 26);
+
+                // 竞争模式直接报胜负；单人模式 players[1] 不存在，所以分数行要按人数拼
+                let title = '游戏结束';
+                if (teamMode === 'vs' && players.length === 2) {
+                    const a = players[0];
+                    const b = players[1];
+                    title = (a.alive && !b.alive) ? 'P1 获胜'
+                        : (b.alive && !a.alive) ? 'P2 获胜'
+                            : '平局';
+                }
+                ctx.fillText(title, W / 2, H / 2 - 26);
 
                 ctx.font = '15px ' + FONT;
-                ctx.fillText('得分为 ' + score, W / 2, H / 2 + 6);
+                const parts = [];
+                for (let i = 0; i < players.length; i++) {
+                    parts.push(players[i].def.name + ' ' + players[i].score);
+                }
+                ctx.fillText(parts.join('　'), W / 2, H / 2 + 6);
 
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
                 ctx.font = '12px ' + FONT;
-                ctx.fillText('按空格 / 回车重新开始', W / 2, H / 2 + 38);
+                ctx.fillText('按空格 / 回车重新开始 · 按 Esc 回到模式选择', W / 2, H / 2 + 38);
+            }
+
+            function drawPauseOverlay() {
+                ctx.fillStyle = COLOR.mask;
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.fillStyle = COLOR.text;
+                ctx.font = 'bold 22px ' + FONT;
+                ctx.fillText('已暂停', W / 2, H / 2 - 16);
+
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.font = '12px ' + FONT;
+                ctx.fillText('按 P 或点「继续 ▶」回到游戏', W / 2, H / 2 + 22);
             }
 
             function render() {
@@ -958,19 +1125,25 @@
                 drawApple();
                 drawSpeedItem();
                 drawWidenItem();
+                drawReviveItem();
                 drawDrops();
                 drawTurrets();
                 drawBullets();
                 drawCorpses();
                 drawEnemy();
-                drawSnake();
+                for (let i = 0; i < players.length; i++) drawSnake(players[i]);
                 if (state === 'over') drawOverlay();
+                else if (state === 'paused') drawPauseOverlay();
             }
 
             // ------------------------------ 玩法 ------------------------------
             // 收集没有被蛇、苹果、道具占用的格子
             function freeCells() {
-                const taken = new Set(snake.map(function (s) { return s.y * COLS + s.x; }));
+                const taken = new Set();
+                for (let i = 0; i < players.length; i++) {
+                    const b = players[i].body;
+                    for (let k = 0; k < b.length; k++) taken.add(b[k].y * COLS + b[k].x);
+                }
                 for (let e = 0; e < enemies.length; e++) {
                     const body = enemies[e].body;
                     for (let i = 0; i < body.length; i++) {
@@ -1015,7 +1188,7 @@
             // 当前应该同时存在几个苹果：存活时间 / 得分取较大者，越后期越多
             function appleTargetCount(now) {
                 const byTime = APPLE_BASE + Math.floor(Math.max(0, now - runStartAt) / (APPLE_RAMP_SEC * 1000));
-                const byScore = APPLE_BASE + Math.floor(score / APPLE_RAMP_SCORE);
+                const byScore = APPLE_BASE + Math.floor(topScore() / APPLE_RAMP_SCORE);
                 return Math.min(Math.max(byTime, byScore), APPLE_MAX);
             }
 
@@ -1051,9 +1224,12 @@
                 ROWS += add * 2;
 
                 // 左边、上面各多了一格，所以已有坐标统一 +add
-                for (let i = 0; i < snake.length; i++) {
-                    snake[i].x += add;
-                    snake[i].y += add;
+                for (let i = 0; i < players.length; i++) {
+                    const b = players[i].body;
+                    for (let k = 0; k < b.length; k++) {
+                        b[k].x += add;
+                        b[k].y += add;
+                    }
                 }
                 for (let i = 0; i < apples.length; i++) {
                     apples[i].x += add;
@@ -1096,29 +1272,47 @@
                 widenStartAt = 0;
                 resizeCanvas();
 
-                snake = [cell(5, 5), cell(5, 6)];   // 初始蛇身
-                snakeHp = [SEGMENT_HP, SEGMENT_HP];
-                direction = DIRS.right;
-                queue = [];
-                score = 0;
+                // 按当前模式建玩家：P1 从左侧出发向右，P2 从右侧出发向左
+                players = [];
+                const playerCount = MODES[mode].count;
+                for (let i = 0; i < playerCount; i++) {
+                    const def = PLAYER_DEFS[i];
+                    const d = DIRS[def.dir];
+                    const hx = (i === 0) ? 4 : COLS - 5;
+                    const hy = Math.floor(ROWS / 2);
+                    const body = [];
+                    for (let k = 0; k < 2; k++) {
+                        body.push(cell(hx - d.x * k, hy - d.y * k));
+                    }
+                    players.push({
+                        def: def,
+                        body: body,
+                        hp: [SEGMENT_HP, SEGMENT_HP],
+                        dir: d,
+                        queue: [],
+                        acc: 0,
+                        stepMs: STEP_MS,
+                        boostUntil: 0,
+                        coins: 0,
+                        score: 0,
+                        spawnAt: -1,
+                        alive: true,
+                        buildRequested: false
+                    });
+                }
 
-                // 道具与加速状态归零
-                boostUntil = 0;
-                stepMs = STEP_MS;
                 powerUps = { speed: null, widen: null };
                 powerRespawnAt = { speed: 0, widen: 0 };
                 apples = [];
 
                 enemies = [];
                 enemyRespawns = [];
+                reviveItem = null;
                 runStartAt = -1;
-                playerSpawnAt = -1;
-                coins = 0;
                 drops = [];
                 corpses = [];
                 turrets = [];
                 bullets = [];
-                buildRequested = false;
 
                 spawnApple();
                 for (let i = 0; i < POWER_KINDS.length; i++) {
@@ -1128,50 +1322,69 @@
                 syncHud();
             }
 
-            function start() {
+            // 选模式开局：1 = 单人（15 宽场地），2 = 本地双人（宽度翻倍）
+            function start(m, tm) {
+                if (MODES[m]) mode = m;
+                if (TEAM_MODES[tm]) teamMode = tm;
+                const def = MODES[mode];
+                START_COLS = def.cols;
+                START_ROWS = def.rows;
+                MAX_COLS = def.maxCols;
+                MAX_ROWS = def.maxRows;
+
+                startPanelEl.hidden = true;
                 reset();
                 state = 'running';
-                acc = 0;
                 last = performance.now();
             }
 
-            function turn(name) {
-                if (state !== 'running') return;
+            // 回到开始面板（Esc 或开局时）
+            function showMenu() {
+                reset();               // 用当前模式的场地当背景
+                state = 'menu';
+                startPanelEl.hidden = false;
+                syncPauseBtn();
+            }
+
+            function turn(p, name) {
+                if (state !== 'running' || !p.alive) return;
 
                 const dir = DIRS[name];
                 if (!dir) return;
 
                 // 以最后一个待生效方向为准来判断，避免同一帧连按导致掉头
-                const ref = queue.length ? queue[queue.length - 1] : direction;
+                const ref = p.queue.length ? p.queue[p.queue.length - 1] : p.dir;
                 if (dir.x === ref.x && dir.y === ref.y) return;     // 同方向，忽略
                 if (dir.x === -ref.x && dir.y === -ref.y) return;   // 禁止 180° 掉头
-                if (queue.length >= 2) return;
+                if (p.queue.length >= 2) return;
 
-                queue.push(dir);
+                p.queue.push(dir);
             }
 
-            // 拾取道具
-            function pickPowerUp(kind, now) {
+            // 拾取道具（哪一位吃到，加速就加在哪一位身上）
+            function pickPowerUp(p, kind, now) {
                 powerUps[kind] = null;
                 powerRespawnAt[kind] = now + POWER_DEFS[kind].respawnMs;
 
                 if (kind === 'speed') {
                     // 步长乘以 SPEED_FACTOR，并从现在起持续 SPEED_MS
-                    setStepMs(STEP_MS * SPEED_FACTOR);
-                    boostUntil = now + SPEED_MS;   // 重复拾取只刷新时间，不越叠越快
+                    setStepMs(p, STEP_MS * SPEED_FACTOR);
+                    p.boostUntil = now + SPEED_MS;   // 重复拾取只刷新时间，不越叠越快
                 } else if (kind === 'widen') {
                     widenField(now);
                 }
             }
 
-            function step(now) {
-                // direction 在上一步落子后就定好了，所以蛇头动画的终点就是这里的落点，
+            function step(p, now) {
+                if (!p.alive) return;
+
+                // dir 在上一步落子后就定好了，所以蛇头动画的终点就是这里的落点，
                 // 转弯时不会出现「头已经伸到 A 格、逻辑却走到 B 格」的跳变
-                const head = cell(snake[0].x + direction.x, snake[0].y + direction.y);
+                const head = cell(p.body[0].x + p.dir.x, p.body[0].y + p.dir.y);
 
                 // 撞墙
                 if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS) {
-                    return gameOver();
+                    return killPlayer(p, now);
                 }
 
                 const eatIdx = appleIndexAt(head.x, head.y);
@@ -1180,8 +1393,8 @@
                 // 这一帧会吃到哪个道具（苹果和道具不会在同一格）
                 let hitPower = null;
                 for (let i = 0; i < POWER_KINDS.length; i++) {
-                    const p = powerUps[POWER_KINDS[i]];
-                    if (p && p.x === head.x && p.y === head.y) {
+                    const pu = powerUps[POWER_KINDS[i]];
+                    if (pu && pu.x === head.x && pu.y === head.y) {
                         hitPower = POWER_KINDS[i];
                         break;
                     }
@@ -1193,29 +1406,28 @@
                 const willGrow = willEat || dropKind === 'len';
 
                 // 这一帧不会移动的那截尾巴不参与碰撞判定（尾巴正好让开）
-                const body = willGrow ? snake : snake.slice(0, snake.length - 1);
+                const body = willGrow ? p.body : p.body.slice(0, p.body.length - 1);
                 for (let i = 0; i < body.length; i++) {
-                    if (body[i].x === head.x && body[i].y === head.y) return gameOver();
+                    if (body[i].x === head.x && body[i].y === head.y) return killPlayer(p, now);
                 }
 
-                // 撞到任何一条敌人蛇（整条都算，包括尾巴）
-                if (enemyAt(head.x, head.y, null)) return gameOver();
+                // 撞到敌人蛇、另一位玩家、或者任意炮塔
+                if (enemyAt(head.x, head.y, null)) return killPlayer(p, now);
+                if (playerAt(head.x, head.y, p)) return killPlayer(p, now);
+                if (occupiedByTurret(head.x, head.y)) return killPlayer(p, now);
 
-                // 撞到自己造的炮塔
-                if (occupiedByTurret(head.x, head.y)) return gameOver();
-
-                snake.unshift(head);
+                p.body.unshift(head);
                 if (willGrow) {
                     // 变长时给尾巴补一格血。血量按「从蛇头数第几节」对齐，
                     // 所以蛇往前走时，受伤的那一节会跟着身体一起前进
-                    snakeHp.push(SEGMENT_HP);
+                    p.hp.push(SEGMENT_HP);
                 } else {
-                    snake.pop();   // 道具 / 金币不增加长度
+                    p.body.pop();   // 道具 / 金币不增加长度
                 }
 
                 if (willEat) {
                     apples.splice(eatIdx, 1);
-                    score += 1;
+                    p.score += 1;
                     spawnApple();   // 吃掉一个补一个
                     syncHud();
                 }
@@ -1223,33 +1435,163 @@
                 if (dropIdx !== -1) {
                     drops.splice(dropIdx, 1);
                     if (dropKind === 'coin') {
-                        coins += 1;
+                        p.coins += 1;
                         syncHud();
                     }
                 }
 
-                if (hitPower) pickPowerUp(hitPower, now);
+                if (hitPower) pickPowerUp(p, hitPower, now);
+
+                // 脚下的复活道具：把出局的队友救回来
+                if (reviveItem && reviveItem.x === head.x && reviveItem.y === head.y) {
+                    if (revivePartner(p, now)) reviveItem = null;
+                }
 
                 // 落子之后再取下一个方向，下一段动画才能提前知道该往哪拐
-                if (queue.length) direction = queue.shift();
+                if (p.queue.length) p.dir = p.queue.shift();
+            }
+
+            // 这一格被哪位玩家的身体占着（except 用来排除自己）
+            function playerAt(x, y, except) {
+                for (let i = 0; i < players.length; i++) {
+                    const q = players[i];
+                    if (q === except || !q.alive) continue;
+                    for (let k = 0; k < q.body.length; k++) {
+                        if (q.body[k].x === x && q.body[k].y === y) return q;
+                    }
+                }
+                return null;
+            }
+
+            // 某位玩家出局：留一具同色的消散尸体；两位都出局才结算
+            function killPlayer(p, now) {
+                if (!p.alive) return;
+                p.alive = false;
+                p.acc = p.stepMs;      // 停在冲到终点的那一帧，避免蛇头弹回
+                corpses.push({
+                    body: p.body, hp: p.hp, dir: p.dir,
+                    diedAt: now,
+                    loot: false,       // 玩家的尸体不掉战利品
+                    bodyColor: p.def.body,
+                    headColor: p.def.head
+                });
+                if (p.score > best) { best = p.score; saveBest(); }
+                syncHud();
+
+                // 合作：队友还活着，就在场上留一个复活道具给他捡
+                if (TEAM_MODES[teamMode].revive && partnerAlive(p) && !reviveItem) {
+                    spawnReviveItem();
+                }
+
+                // 竞争：先出局的一方输，另一位立刻获胜
+                if (teamMode === 'vs' && mode === 2 && partnerAlive(p)) {
+                    gameOver();
+                    return;
+                }
+
+                for (let i = 0; i < players.length; i++) {
+                    if (players[i].alive) return;
+                }
+                gameOver();
+            }
+
+            function partnerAlive(p) {
+                for (let i = 0; i < players.length; i++) {
+                    if (players[i] !== p && players[i].alive) return true;
+                }
+                return false;
+            }
+
+            // 在离敌人远一点的空地上放一个复活道具
+            function spawnReviveItem() {
+                const free = freeCells();
+                if (free.length === 0) return;
+
+                let spot = null;
+                for (let tries = 0; tries < 200 && !spot; tries++) {
+                    const i = free[Math.floor(Math.random() * free.length)];
+                    const x = i % COLS;
+                    const y = Math.floor(i / COLS);
+                    let ok = true;
+                    for (let e = 0; e < enemies.length; e++) {
+                        const h = enemies[e].body[0];
+                        if (Math.abs(h.x - x) + Math.abs(h.y - y) < REVIVE_GAP) { ok = false; break; }
+                    }
+                    if (ok) spot = { x: x, y: y };
+                }
+                reviveItem = spot || { x: free[0] % COLS, y: Math.floor(free[0] / COLS) };
+            }
+
+            // 找一段连着的空格，让复活的玩家落脚（头 + 身后 len-1 节）
+            function findLineSpot(len) {
+                const free = freeCells();
+                if (free.length < len + 1) return null;
+
+                for (let tries = 0; tries < 200; tries++) {
+                    const i = free[Math.floor(Math.random() * free.length)];
+                    const hx = i % COLS;
+                    const hy = Math.floor(i / COLS);
+
+                    for (let k = 0; k < STEP_DIRS.length; k++) {
+                        const d = STEP_DIRS[k];
+                        const cells = [];
+                        let ok = true;
+                        for (let q = 0; q < len; q++) {
+                            const x = hx - d.x * q;
+                            const y = hy - d.y * q;
+                            if (x < 0 || y < 0 || x >= COLS || y >= ROWS ||
+                                free.indexOf(y * COLS + x) === -1) { ok = false; break; }
+                            cells.push(cell(x, y));
+                        }
+                        if (!ok) continue;
+
+                        const fx = hx + d.x;
+                        const fy = hy + d.y;
+                        if (fx < 0 || fy < 0 || fx >= COLS || fy >= ROWS) continue;
+                        if (free.indexOf(fy * COLS + fx) === -1) continue;
+                        return { body: cells, dir: d };
+                    }
+                }
+                return null;
+            }
+
+            // 把出局的队友救回来，并播一次出生缩放
+            function revivePartner(p, now) {
+                for (let i = 0; i < players.length; i++) {
+                    const q = players[i];
+                    if (q === p || q.alive) continue;
+
+                    const spot = findLineSpot(REVIVE_LEN);
+                    if (!spot) return false;
+
+                    q.body = spot.body;
+                    q.hp = [];
+                    for (let k = 0; k < REVIVE_LEN; k++) q.hp.push(SEGMENT_HP);
+                    q.dir = spot.dir;
+                    q.queue = [];
+                    q.acc = 0;
+                    q.stepMs = STEP_MS;
+                    q.boostUntil = 0;
+                    q.spawnAt = now;
+                    q.alive = true;
+                    return true;
+                }
+                return false;
             }
 
             function gameOver() {
                 state = 'over';
-                acc = stepMs;       // 停在冲到终点的那一帧，避免蛇头弹回
-                if (score > best) {
-                    best = score;
-                    saveBest();
+                for (let i = 0; i < players.length; i++) {
+                    const p = players[i];
+                    p.acc = p.stepMs;   // 停在冲到终点的那一帧，避免蛇头弹回
+                    if (p.score > best) { best = p.score; saveBest(); }
                 }
                 syncHud();
             }
 
             // ------------------------------ 敌人蛇 ------------------------------
             function occupiedByPlayer(x, y) {
-                for (let i = 0; i < snake.length; i++) {
-                    if (snake[i].x === x && snake[i].y === y) return true;
-                }
-                return false;
+                return playerAt(x, y, null) !== null;
             }
 
             // 某条蛇自己的身体；skipTail = 尾巴这一步会让开，不算障碍
@@ -1305,8 +1647,9 @@
             function buildBlockMap(self) {
                 const blocked = new Uint8Array(COLS * ROWS);
 
-                for (let i = 0; i < snake.length; i++) {
-                    blocked[snake[i].y * COLS + snake[i].x] = 1;
+                for (let i = 0; i < players.length; i++) {
+                    const b = players[i].body;
+                    for (let k = 0; k < b.length; k++) blocked[b[k].y * COLS + b[k].x] = 1;
                 }
                 for (let i = 0; i < turrets.length; i++) {
                     blocked[turrets[i].y * COLS + turrets[i].x] = 1;
@@ -1371,7 +1714,7 @@
 
                 // 目标：默认抢苹果；也可以改成堵玩家下一步要走的格子
                 const target = (ENEMY_TARGET === 'player')
-                    ? { x: snake[0].x + direction.x, y: snake[0].y + direction.y }
+                    ? nearestPlayerNext(head)
                     : nearestApple(head);
 
                 if (target) {
@@ -1424,10 +1767,25 @@
                 return fallback.dir;
             }
 
-            // 难度：存活越久 / 吃得越多，同时存在的敌人越多
+            // 离某点最近的那位玩家下一步要进的格子
+            function nearestPlayerNext(from) {
+                let best = null;
+                let bestD = Infinity;
+                for (let i = 0; i < players.length; i++) {
+                    const q = players[i];
+                    if (!q.alive) continue;
+                    const d = Math.abs(q.body[0].x - from.x) + Math.abs(q.body[0].y - from.y);
+                    if (d < bestD) { bestD = d; best = q; }
+                }
+                return best
+                    ? { x: best.body[0].x + best.dir.x, y: best.body[0].y + best.dir.y }
+                    : null;
+            }
+
+            // 难度：存活越久 / 吃得越多，同时存在的敌人越多（看两人里更高的分）
             function enemyTargetCount(now) {
                 const byTime = 1 + Math.floor(Math.max(0, now - runStartAt) / (ENEMY_RAMP_SEC * 1000));
-                const byScore = 1 + Math.floor(score / ENEMY_RAMP_SCORE);
+                const byScore = 1 + Math.floor(topScore() / ENEMY_RAMP_SCORE);
                 return Math.min(Math.max(byTime, byScore), ENEMY_MAX);
             }
 
@@ -1451,14 +1809,21 @@
                 const free = freeCells();
                 if (free.length < def.len + 1) return false;
 
-                const playerHead = snake[0];
                 for (let tries = 0; tries < 200; tries++) {
                     const i = free[Math.floor(Math.random() * free.length)];
                     const head = cell(i % COLS, Math.floor(i / COLS));
 
-                    // 别在玩家脸上刷出来
-                    if (Math.abs(head.x - playerHead.x) +
-                        Math.abs(head.y - playerHead.y) < ENEMY_SPAWN_GAP) continue;
+                    // 别在任何一位玩家脸上刷出来
+                    let tooClose = false;
+                    for (let q = 0; q < players.length; q++) {
+                        if (!players[q].alive) continue;
+                        const h = players[q].body[0];
+                        if (Math.abs(head.x - h.x) + Math.abs(head.y - h.y) < ENEMY_SPAWN_GAP) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                    if (tooClose) continue;
 
                     for (let k = 0; k < STEP_DIRS.length; k++) {
                         const d = STEP_DIRS[k];
@@ -1498,7 +1863,18 @@
             // 蓝蛇开火：朝玩家蛇头的方向射一发，打中扣对应部位的血
             function fireEnemyBullet(en) {
                 const from = en.body[0];
-                const target = snake[0];
+
+                // 挑最近的活着的玩家打
+                let target = null;
+                let bestD = Infinity;
+                for (let i = 0; i < players.length; i++) {
+                    const q = players[i];
+                    if (!q.alive) continue;
+                    const dd = Math.abs(q.body[0].x - from.x) + Math.abs(q.body[0].y - from.y);
+                    if (dd < bestD) { bestD = dd; target = q.body[0]; }
+                }
+                if (!target) return;
+
                 const dx = target.x - from.x;
                 const dy = target.y - from.y;
                 const d = Math.sqrt(dx * dx + dy * dy);
@@ -1521,12 +1897,13 @@
 
                 // 不立刻消失：留一具会缩小淡出的尸体，动画放完才爆成战利品
                 corpses.push({
-                    kind: target.kind,
                     body: target.body,
                     hp: target.hp,
                     dir: target.dir,
                     diedAt: now,
-                    lootAt: now + DEATH_ANIM_MS
+                    loot: true,
+                    bodyColor: enemyDef(target).body,
+                    headColor: enemyDef(target).head
                 });
             }
 
@@ -1617,7 +1994,7 @@
             }
 
             function syncEnemyHud(now) {
-                if (state !== 'running') {
+                if (state === 'over' || state === 'menu') {   // 暂停时照样显示，只是数字不动
                     enemyTagEl.hidden = true;
                     return;
                 }
@@ -1633,23 +2010,32 @@
                 return false;
             }
 
-            function canBuild() {
-                return state === 'running' &&
-                    snake.length >= TURRET_MIN_LEN &&
-                    turrets.length < TURRET_MAX &&
-                    coins >= TURRET_COIN_COST;
+            // 某位玩家名下有几座塔（上限是每人各自算）
+            function turretCount(p) {
+                let n = 0;
+                for (let i = 0; i < turrets.length; i++) {
+                    if (turrets[i].owner === p) n++;
+                }
+                return n;
             }
 
-            // 从尾巴截下 TURRET_COST 节，塔就建在被截掉的尾尖那一格
-            function buildTurret() {
-                if (!canBuild()) return false;
+            function canBuild(p) {
+                return state === 'running' && p.alive &&
+                    p.body.length >= TURRET_MIN_LEN &&
+                    turretCount(p) < TURRET_MAX &&
+                    p.coins >= TURRET_COIN_COST;
+            }
 
-                const spot = snake[snake.length - 1];
-                snake.length -= TURRET_COST;
-                snakeHp.length = snake.length;
-                coins -= TURRET_COIN_COST;
+            // 从自己尾巴截下 TURRET_COST 节，塔就建在被截掉的尾尖那一格
+            function buildTurret(p) {
+                if (!canBuild(p)) return false;
+
+                const spot = p.body[p.body.length - 1];
+                p.body.length -= TURRET_COST;
+                p.hp.length = p.body.length;
+                p.coins -= TURRET_COIN_COST;
                 syncHud();
-                turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0 });
+                turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0, owner: p });
                 return true;
             }
 
@@ -1670,25 +2056,45 @@
                 return best;
             }
 
-            // 射程内最近的敌人蛇头，没有就返回 null
+            // 竞争模式下炮塔会把对方也算进目标
+            function friendlyFireOn() {
+                return mode === 2 && TEAM_MODES[teamMode].friendlyFire;
+            }
+
+            // 射程内最近的目标（敌人蛇头；竞争模式还包括对方的整条身体）
             function turretTarget(t) {
                 let best = null;
                 let bestD = TURRET_RANGE + 1;
+
                 for (let i = 0; i < enemies.length; i++) {
                     const h = enemies[i].body[0];
-                    const dx = h.x - t.x;
-                    const dy = h.y - t.y;
-                    const d = Math.sqrt(dx * dx + dy * dy);
+                    const d = Math.hypot(h.x - t.x, h.y - t.y);
                     if (d <= TURRET_RANGE && d < bestD) {
                         bestD = d;
                         best = h;
                     }
                 }
+
+                if (friendlyFireOn()) {
+                    for (let i = 0; i < players.length; i++) {
+                        const q = players[i];
+                        if (q === t.owner || !q.alive) continue;
+                        for (let k = 0; k < q.body.length; k++) {
+                            const s = q.body[k];
+                            const d = Math.hypot(s.x - t.x, s.y - t.y);
+                            if (d <= TURRET_RANGE && d < bestD) {
+                                bestD = d;
+                                best = s;
+                            }
+                        }
+                    }
+                }
+
                 return best ? { x: best.x, y: best.y, d: bestD } : null;
             }
 
             function updateTurrets(now) {
-                if (enemies.length === 0) return;
+                if (enemies.length === 0 && !friendlyFireOn()) return;
 
                 for (let i = 0; i < turrets.length; i++) {
                     const t = turrets[i];
@@ -1700,6 +2106,7 @@
                     t.cooldownUntil = now + TURRET_COOLDOWN;
                     bullets.push({
                         from: 'player',
+                        owner: t.owner,
                         x: t.x + 0.5,
                         y: t.y + 0.5,
                         vx: ((target.x - t.x) / target.d) * BULLET_SPEED,
@@ -1737,12 +2144,31 @@
                         if (hitEnemy) {
                             bullets.splice(i, 1);
                             if (damageBody(hitEnemy.body, hitEnemy.hp, hitIdx, now)) killEnemy(hitEnemy, now);
+                            continue;
+                        }
+
+                        // 竞争模式：炮塔的子弹也打对方（不会打自己的炮塔主）
+                        if (friendlyFireOn()) {
+                            for (let k = 0; k < players.length; k++) {
+                                const q = players[k];
+                                if (q === b.owner || !q.alive) continue;
+                                const pIdx = bodyIndexAt(q.body, cx, cy);
+                                if (pIdx === -1) continue;
+                                bullets.splice(i, 1);
+                                if (damageBody(q.body, q.hp, pIdx, now)) killPlayer(q, now);
+                                break;
+                            }
                         }
                     } else {
-                        const pIdx = bodyIndexAt(snake, cx, cy);
-                        if (pIdx !== -1) {
+                        // 敌方子弹只打玩家；打中谁就扣谁那一段的血
+                        for (let k = 0; k < players.length; k++) {
+                            const q = players[k];
+                            if (!q.alive) continue;
+                            const pIdx = bodyIndexAt(q.body, cx, cy);
+                            if (pIdx === -1) continue;
                             bullets.splice(i, 1);
-                            if (damageBody(snake, snakeHp, pIdx, now)) gameOver();
+                            if (damageBody(q.body, q.hp, pIdx, now)) killPlayer(q, now);
+                            break;
                         }
                     }
                 }
@@ -1788,37 +2214,83 @@
                 }
             }
 
-            // 身长不够 / 到上限时按钮变灰
-            let buildBtnLabel = '';
-            function syncBuildBtn() {
-                const label = '建塔 · 身长 −' + TURRET_COST + ' · 币 −' + TURRET_COIN_COST +
-                    '　' + turrets.length + '/' + TURRET_MAX;
-                if (label !== buildBtnLabel) {
-                    buildBtnEl.textContent = label;
-                    buildBtnLabel = label;
+            // 暂停 / 继续
+            let pauseBtnLabel = '';
+            function syncPauseBtn() {
+                const label = (state === 'paused') ? '继续 ▶' : '暂停 ❚❚';
+                if (label !== pauseBtnLabel) {
+                    pauseBtnEl.textContent = label;
+                    pauseBtnLabel = label;
                 }
-                buildBtnEl.classList.toggle('is-off', !canBuild());
+                pauseBtnEl.classList.toggle('is-off', state !== 'running' && state !== 'paused');
+            }
+
+            function togglePause() {
+                if (state === 'running') state = 'paused';
+                else if (state === 'paused') state = 'running';
+                else return;                      // 结算画面按 P 不做事
+                syncPauseBtn();
+            }
+
+            // 身长不够 / 到上限时按钮变灰
+            let buildBtnLabels = ['', ''];
+            function syncBuildBtn() {
+                for (let i = 0; i < buildBtnEls.length; i++) {
+                    // 单人模式下把 P2 那个按钮收起来
+                    if (i >= players.length) {
+                        buildBtnEls[i].style.display = 'none';
+                        continue;
+                    }
+                    const p = players[i];
+                    buildBtnEls[i].style.display = '';
+
+                    const label = p.def.name + ' 建塔[' + p.def.buildKey + '] −' + TURRET_COST +
+                        '身长 −' + TURRET_COIN_COST + '币　' + turretCount(p) + '/' + TURRET_MAX;
+                    if (label !== buildBtnLabels[i]) {
+                        buildBtnEls[i].textContent = label;
+                        buildBtnLabels[i] = label;
+                    }
+                    buildBtnEls[i].classList.toggle('is-off', !canBuild(p));
+                }
             }
 
             // ------------------------------ 主循环 ------------------------------
-            function frame(now) {
+            function frame(rawNow) {
                 // 单帧最多按 200ms 计：切后台回来子弹不会瞬移
-                const dtSec = Math.max(0, Math.min(now - last, 200)) / 1000;
+                const dtMs = Math.max(0, Math.min(rawNow - last, 200));
+                last = rawNow;
+
+                // 暂停时游戏时钟停走：道具重生、加速剩余、敌人开火冷却、
+                // 掉落消失、自愈……全都挂在这个时钟上，不会被暂停白白耗掉
+                if (state !== 'paused') gameNow += dtMs;
+
+                const now = gameNow;
+                const dtSec = dtMs / 1000;
                 nowRef = now;
                 if (runStartAt < 0) runStartAt = now;   // 本局计时起点
-                if (playerSpawnAt < 0) playerSpawnAt = now;
-
                 if (state === 'running') {
-                    // 玩家请求建造炮塔（空格 / 屏幕按钮）
-                    if (buildRequested) {
-                        buildRequested = false;
-                        buildTurret();
-                    }
+                    // 两位玩家：出生计时 / 建塔请求 / 加速到期 / 各自按自己的节奏走
+                    for (let i = 0; i < players.length; i++) {
+                        const p = players[i];
+                        if (p.spawnAt < 0) p.spawnAt = now;
+                        if (!p.alive) continue;
 
-                    // 加速到期
-                    if (boostUntil && now >= boostUntil) {
-                        boostUntil = 0;
-                        setStepMs(STEP_MS);
+                        if (p.buildRequested) {
+                            p.buildRequested = false;
+                            buildTurret(p);
+                        }
+
+                        if (p.boostUntil && now >= p.boostUntil) {
+                            p.boostUntil = 0;
+                            setStepMs(p, STEP_MS);
+                        }
+
+                        // 每帧最多累积一个步长：切到后台再回来不会瞬间追帧
+                        p.acc += Math.min(dtMs, p.stepMs);
+                        while (p.acc >= p.stepMs && state === 'running' && p.alive) {
+                            p.acc -= p.stepMs;
+                            step(p, now);
+                        }
                     }
 
                     // 道具重生
@@ -1828,13 +2300,6 @@
                             powerRespawnAt[kind] = 0;
                             spawnPowerUp(kind);
                         }
-                    }
-
-                    // 每帧最多累积一个步长：切到后台再回来不会瞬间追帧
-                    acc += Math.min(now - last, stepMs);
-                    while (acc >= stepMs && state === 'running') {
-                        acc -= stepMs;
-                        step(now);
                     }
 
                     // 苹果按难度补足
@@ -1862,7 +2327,7 @@
                             fireEnemyBullet(en);
                         }
 
-                        en.acc += Math.min(now - last, en.stepMs);
+                        en.acc += Math.min(dtMs, en.stepMs);
                         while (en.acc >= en.stepMs && state === 'running' &&
                                enemies.indexOf(en) !== -1) {
                             en.acc -= en.stepMs;
@@ -1881,16 +2346,19 @@
 
                     // 阵亡动画放完 -> 尸体爆成战利品
                     for (let i = corpses.length - 1; i >= 0; i--) {
-                        if (now >= corpses[i].lootAt) {
-                            dropLoot(corpses[i].body, now);
-                            corpses.splice(i, 1);
-                        }
+                        const c = corpses[i];
+                        if (now < c.diedAt + DEATH_ANIM_MS) continue;
+                        if (c.loot) dropLoot(c.body, now);
+                        corpses.splice(i, 1);
                     }
 
                     // 蛇身血量随时间线性回复：HP_REGEN_MS 毫秒回 1 点
                     const regen = (dtSec * 1000) / HP_REGEN_MS;
-                    for (let i = 0; i < snakeHp.length; i++) {
-                        snakeHp[i] = Math.min(SEGMENT_HP, snakeHp[i] + regen);
+                    for (let i = 0; i < players.length; i++) {
+                        const hp = players[i].hp;
+                        for (let k = 0; k < hp.length; k++) {
+                            hp[k] = Math.min(SEGMENT_HP, hp[k] + regen);
+                        }
                     }
                     for (let e = 0; e < enemies.length; e++) {
                         const hp = enemies[e].hp;
@@ -1899,7 +2367,6 @@
                         }
                     }
                 }
-                last = now;
 
                 // 场地放大动画：画布尺寸和画面偏移一起缓入缓出
                 if (widenStartAt) {
@@ -1914,6 +2381,7 @@
                 syncBoostHud(now);
                 syncEnemyHud(now);
                 syncBuildBtn();
+                syncPauseBtn();
                 render();
                 requestAnimationFrame(frame);
             }
@@ -1922,17 +2390,57 @@
             function onKeyDown(ev) {
                 const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
 
-                if (KEYMAP[key]) {
-                    ev.preventDefault();
-                    turn(KEYMAP[key]);
+                // 面板上：1 / 2 直接选模式
+                if (state === 'menu') {
+                    if (key === '1') { ev.preventDefault(); start(1); }
+                    else if (key === '2') { ev.preventDefault(); start(2, 'coop'); }
+                    else if (key === '3') { ev.preventDefault(); start(2, 'vs'); }
                     return;
                 }
 
-                // 空格：游戏中 = 建塔，结束后 = 重开
+                // Esc：随时退回模式选择
+                if (key === 'Escape') {
+                    ev.preventDefault();
+                    showMenu();
+                    return;
+                }
+
+                // P1 用方向键，P2 用 WASD
+                if (KEYMAP_P1[key]) {
+                    ev.preventDefault();
+                    turn(players[0], KEYMAP_P1[key]);
+                    return;
+                }
+                if (KEYMAP_P2[key]) {
+                    ev.preventDefault();
+                    turn(players[1], KEYMAP_P2[key]);
+                    return;
+                }
+
+                // P：暂停 / 继续
+                if (key === 'p') {
+                    ev.preventDefault();
+                    togglePause();
+                    return;
+                }
+
+                // 建塔键：P1 用 /，P2 用 Q
+                if (state === 'running' && key === '/') {
+                    ev.preventDefault();
+                    players[0].buildRequested = true;
+                    return;
+                }
+
+                if (state === 'running' && key === 'q') {
+                    ev.preventDefault();
+                    if (players[1]) players[1].buildRequested = true;
+                    return;
+                }
+
+                // 空格：只在结算画面重开
                 if (key === ' ') {
                     ev.preventDefault();
                     if (state === 'over') start();
-                    else buildRequested = true;
                     return;
                 }
 
@@ -1948,14 +2456,26 @@
                 document.querySelectorAll('.operate .btn'),
                 function (btn) {
                     btn.addEventListener('click', function () {
-                        turn(btn.getAttribute('data-dir'));
+                        turn(players[0], btn.getAttribute('data-dir'));
                     });
                 }
             );
 
-            buildBtnEl.addEventListener('click', function () {
-                buildRequested = true;
+            for (let i = 0; i < buildBtnEls.length; i++) {
+                (function (idx) {
+                    buildBtnEls[idx].addEventListener('click', function () {
+                        if (players[idx]) players[idx].buildRequested = true;
+                    });
+                })(i);
+            }
+
+            pauseBtnEl.addEventListener('click', function () {
+                togglePause();
             });
+
+            startBtnSingleEl.addEventListener('click', function () { start(1); });
+            startBtnCoopEl.addEventListener('click', function () { start(2, 'coop'); });
+            startBtnVsEl.addEventListener('click', function () { start(2, 'vs'); });
 
             // 手机上结束后点棋盘即可重开
             canvas.addEventListener('click', function () {
@@ -1963,7 +2483,7 @@
             });
 
             // ------------------------------ 启动 ------------------------------
-            start();
+            showMenu();   // 先让玩家选模式
             requestAnimationFrame(function (now) {
                 last = now;   // 首帧不计时，避免刚开局就跳步
                 frame(now);
