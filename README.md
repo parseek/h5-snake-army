@@ -30,11 +30,11 @@ python -m http.server 8080
 需要 Rust 工具链 + Node；Windows 上还需要 WebView2 运行时（Win10/11 一般自带）。
 
 ```bash
-npm install          # 只装 Tauri CLI
-npm run sync         # 把前端拷进 dist/（Tauri 只打包 dist/）
-npm run dev          # 开发模式
-npm run build:exe    # 只出 exe（快）
-npm run build        # 出 exe + NSIS 安装包
+npm install              # 只装 Tauri CLI
+npm run fetch:easytier   # 下载跨网用的 EasyTier（不联机跨网可以不装）
+npm run dev              # 开发模式
+npm run build:exe        # 只编译出 exe（快，约 1.5 分钟）
+npm run build            # 完整发布包：exe + EasyTier + 便携 zip
 ```
 
 前端文件**始终留在仓库根目录**，`dist/` 是构建时生成的、不入库。
@@ -132,6 +132,64 @@ scripts/sync-web.mjs        把前端拷进 dist/
 scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/
 scripts/fetch-easytier.mjs  下载 EasyTier
 ```
+
+## 发布
+
+### 出一个「完整可运行」的包
+
+```bash
+npm run dist
+```
+
+依次做三件事：下载 EasyTier（还没有的话）→ 编译并打包 exe → 组装便携包。产物：
+
+```
+release/snake-army-1.0.0-win-x64.zip      14.5 MB
+  snake-army.exe                           3.11 MB   主程序（前端已经嵌进去了）
+  binaries/easytier-core.exe              23.27 MB   跨网用
+  binaries/easytier-cli.exe                9.51 MB   排查用
+  binaries/wintun.dll                      0.41 MB   虚拟网卡驱动
+  binaries/Packet.dll                      0.21 MB   WinDivert 用户态 DLL
+  binaries/WinDivert64.sys                 0.09 MB   UDP 广播转发要的内核驱动
+  README.md
+```
+
+解压就能双击跑，不用安装，也不用单独去下 EasyTier。
+
+**`binaries/` 里五个文件一个都不能少。** 少 `Packet.dll` 的话
+`easytier-core.exe` 会直接以 `0xC0000135`（STATUS_DLL_NOT_FOUND）退出，
+连日志都来不及打。这是实测踩出来的：第一版就漏了，包里的 EasyTier 起不来。
+
+### 发到 Gitee Releases
+
+仓库在 Gitee，而且这台机器的 hosts 把 github.com 整个指到了 127.0.0.1，所以发行版发 Gitee：
+
+**网页**：仓库 →「发行版」→「新建发行版」，填 tag（比如 `v1.0.0`），
+把上面那个 zip 传上去。
+
+**或者 API**：
+
+```bash
+curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases" \
+  -d "access_token=<你的令牌>" \
+  -d "tag_name=v1.0.0" \
+  -d "name=贪吃蛇 v1.0.0" \
+  -d "body=首个可发布版本"
+
+# 拿到 release id 之后传附件：
+curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases/<id>/attach_files" \
+  -d "access_token=<你的令牌>" \
+  -F "file=@release/snake-army-1.0.0-win-x64.zip"
+```
+
+安装器（NSIS/MSI）这条路**没走**：Tauri 的打包工具要从 GitHub 现场下载，
+而本机 hosts 把 github.com 整个指到了 127.0.0.1。便携包解压即用，够用。
+
+### 版本号写在哪
+
+两处要一起改：`package.json` 的 `version`（决定 zip 文件名）和
+`src-tauri/tauri.conf.json` 的 `version`（决定程序属性里的版本），
+另外前端 `index.html` 里的 `APP_VERSION` 管的是联机握手时的版本校验。
 
 ## 联机的已知边界
 

@@ -5,3 +5,5 @@
 /src-tauri/gen/
 /dist/
 /node_modules/
+# 发布产物（作为 Gitee Release 附件上传，不入库）
+/release/
