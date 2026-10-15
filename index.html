@@ -1718,12 +1718,20 @@
                 MAX_COLS = def.maxCols;
                 MAX_ROWS = def.maxRows;
 
-                startPanelEl.hidden = true;
+                hideStartUi();
                 reset();
                 state = 'running';
                 last = performance.now();
                 netAsk = null;
                 syncNetBar();
+            }
+
+            // 开局就把开始面板和联机面板一起收起来。
+            // 之前 start() 只藏了 startPanel，联机面板会一直盖在棋盘上 —— 客机更是
+            // 根本不会走 start()，得在握手和快照里也收一次。
+            function hideStartUi() {
+                startPanelEl.hidden = true;
+                netPanelEl.hidden = true;
             }
 
             // 回到开始面板（Esc 或开局时）
@@ -1940,6 +1948,7 @@
                         try { netDC.close(); } catch (e) { }
                         return;
                     }
+                    hideStartUi();
                     if (netRole === 'host') {
                         netSetStatus('已连接 ✅', '对局开始');
                         start(2, teamMode);      // 联机固定双人，主机负责开
@@ -2268,6 +2277,7 @@
 
                 syncHud();
                 syncNetBar();     // 客机的状态条要跟着主机的状态走
+                if (!netPanelEl.hidden || !startPanelEl.hidden) hideStartUi();
             }
 
             function turn(p, name) {
