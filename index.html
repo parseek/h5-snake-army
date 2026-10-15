@@ -481,8 +481,7 @@
         <div class="hud">
             <span>最高 <b id="best">0</b></span>
             <span>场地 <b id="size">30×15</b></span>
-            <span class="p1">🟢 P1 <b id="score0">0</b> 分 · <b id="coins0">0</b> 币</span>
-            <span class="p2">🟠 P2 <b id="score1">0</b> 分 · <b id="coins1">0</b> 币</span>
+            <span id="hudPlayers"></span>
             <span class="boost" id="boost" hidden>⚡ 加速 <b id="boostLeft">0</b>s</span>
             <span class="enemy" id="enemyTag" hidden>🐍 <b id="enemyLeft">0/1</b></span>
         </div>
@@ -658,6 +657,9 @@
             const REVIVE_LEN = 3;   // 复活出来时的身长
             const REVIVE_GAP = 3;   // 复活道具至少离敌人这么远（曼哈顿距离）
 
+            // 联机时房主会指定：{ cols, rows, count }。本地模式为 null，用 MODES 里的值。
+            let netArena = null;
+
             let START_COLS = MODES[1].cols;   // 初始场地宽（格）
             let START_ROWS = MODES[1].rows;   // 初始场地高（格）
             let MAX_COLS = MODES[1].maxCols;  // 场地拓宽上限，避免无限变大
@@ -789,11 +791,17 @@
             };
             const KEYMAP_P2 = { w: 'up', s: 'down', a: 'left', d: 'right' };
 
-            // 本地双人：P1 绿色从左边出发向右，P2 橙色从右边出发向左
+            // 玩家配色。联机最多这么多人，本地模式只用前两个。
+            // 刻意避开敌人蛇的紫 / 红 / 蓝，免得打起来看混。
             const PLAYER_DEFS = [
                 { name: 'P1', body: '#008000', head: '#146b14', dir: 'right', buildKey: '/' },
-                { name: 'P2', body: '#e8720c', head: '#a94f06', dir: 'left', buildKey: 'Q' }
+                { name: 'P2', body: '#e8720c', head: '#a94f06', dir: 'left', buildKey: 'Q' },
+                { name: 'P3', body: '#0d8b8b', head: '#0a6363', dir: 'right', buildKey: '/' },
+                { name: 'P4', body: '#b03a8f', head: '#7d2864', dir: 'left', buildKey: 'Q' },
+                { name: 'P5', body: '#6b8e23', head: '#4a6318', dir: 'right', buildKey: '/' },
+                { name: 'P6', body: '#546e7a', head: '#37474f', dir: 'left', buildKey: 'Q' }
             ];
+            const MAX_PLAYERS = PLAYER_DEFS.length;
 
             const BEST_KEY = 'snake.canvas.best';
             const FONT = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif';
@@ -849,8 +857,38 @@
 
             resizeCanvas();
 
-            const scoreEls = [document.getElementById('score0'), document.getElementById('score1')];
-            const coinsEls = [document.getElementById('coins0'), document.getElementById('coins1')];
+            // HUD 里的玩家条目按人数动态生成 —— 联机可能不止两人
+            const hudPlayersEl = document.getElementById('hudPlayers');
+            let hudEntries = [];
+
+            function syncHudPlayers() {
+                // 不够就补条目（只增不减，省得反复重建 DOM）
+                while (hudEntries.length < players.length) {
+                    const def = PLAYER_DEFS[hudEntries.length] || PLAYER_DEFS[0];
+                    const wrap = document.createElement('span');
+                    const dot = document.createElement('b');
+                    dot.textContent = '●';
+                    dot.style.color = def.body;
+                    wrap.appendChild(dot);
+                    wrap.appendChild(document.createTextNode(' ' + def.name + ' '));
+                    const sc = document.createElement('b');
+                    wrap.appendChild(sc);
+                    wrap.appendChild(document.createTextNode(' 分 · '));
+                    const co = document.createElement('b');
+                    wrap.appendChild(co);
+                    wrap.appendChild(document.createTextNode(' 币'));
+                    hudPlayersEl.appendChild(wrap);
+                    hudEntries.push({ wrap: wrap, sc: sc, co: co });
+                }
+                for (let i = 0; i < hudEntries.length; i++) {
+                    const e = hudEntries[i];
+                    const has = i < players.length;
+                    e.wrap.hidden = !has;
+                    if (!has) continue;
+                    e.sc.textContent = String(players[i].score);
+                    e.co.textContent = String(players[i].coins);
+                }
+            }
             const bestEl = document.getElementById('best');
             const sizeEl = document.getElementById('size');
             const boostEl = document.getElementById('boost');
@@ -958,10 +996,7 @@
             function syncHud() {
                 bestEl.textContent = String(best);
                 sizeEl.textContent = COLS + '×' + ROWS;
-                for (let i = 0; i < players.length; i++) {
-                    scoreEls[i].textContent = String(players[i].score);
-                    coinsEls[i].textContent = String(players[i].coins);
-                }
+                syncHudPlayers();
             }
 
             // 难度爬升看两人里更高的那个分
@@ -1488,14 +1523,15 @@
                 ctx.fillStyle = COLOR.text;
                 ctx.font = 'bold 22px ' + FONT;
 
-                // 竞争模式直接报胜负；单人模式 players[1] 不存在，所以分数行要按人数拼
+                // 竞争模式直接报胜负。人数不定，所以看还剩几个活着的。
                 let title = '游戏结束';
-                if (teamMode === 'vs' && players.length === 2) {
-                    const a = players[0];
-                    const b = players[1];
-                    title = (a.alive && !b.alive) ? 'P1 获胜'
-                        : (b.alive && !a.alive) ? 'P2 获胜'
-                            : '平局';
+                if (teamMode === 'vs' && players.length > 1) {
+                    const alive = [];
+                    for (let i = 0; i < players.length; i++) {
+                        if (players[i].alive) alive.push(players[i]);
+                    }
+                    if (alive.length === 1) title = alive[0].def.name + ' 获胜';
+                    else if (alive.length === 0) title = '平局';
                 }
                 ctx.fillText(title, W / 2, H / 2 - 26);
 
@@ -1682,14 +1718,19 @@
                 widenStartAt = 0;
                 resizeCanvas();
 
-                // 按当前模式建玩家：P1 从左侧出发向右，P2 从右侧出发向左
+                // 按人数建玩家：左右两侧轮流，同一侧再按序号上下错开，
+                // 免得三人以上全挤在右边同一行上。
                 players = [];
-                const playerCount = MODES[mode].count;
+                const want = (netArena && netArena.count) || MODES[mode].count;
+                const playerCount = Math.max(1, Math.min(want, MAX_PLAYERS));
                 for (let i = 0; i < playerCount; i++) {
                     const def = PLAYER_DEFS[i];
-                    const d = DIRS[def.dir];
-                    const hx = (i === 0) ? 4 : COLS - 5;
-                    const hy = Math.floor(ROWS / 2);
+                    const fromLeft = (i % 2 === 0);
+                    const d = fromLeft ? DIRS.right : DIRS.left;
+                    const hx = fromLeft ? 4 : COLS - 5;
+                    const sideIdx = Math.floor(i / 2);
+                    const off = [0, -3, 3, -6, 6, -9][sideIdx] || 0;
+                    const hy = Math.max(1, Math.min(ROWS - 2, Math.floor(ROWS / 2) + off));
                     const body = [];
                     for (let k = 0; k < 2; k++) {
                         body.push(cell(hx - d.x * k, hy - d.y * k));
@@ -1733,14 +1774,16 @@
             }
 
             // 选模式开局：1 = 单人（15 宽场地），2 = 本地双人（宽度翻倍）
-            function start(m, tm) {
+            function start(m, tm, arena) {
                 if (MODES[m]) mode = m;
                 if (TEAM_MODES[tm]) teamMode = tm;
+                // arena 由联机房主给出：{ cols, rows, count }；本地模式不传
+                netArena = arena || null;
                 const def = MODES[mode];
-                START_COLS = def.cols;
-                START_ROWS = def.rows;
-                MAX_COLS = def.maxCols;
-                MAX_ROWS = def.maxRows;
+                START_COLS = (arena && arena.cols) || def.cols;
+                START_ROWS = (arena && arena.rows) || def.rows;
+                MAX_COLS = (arena && arena.maxCols) || Math.max(def.maxCols, START_COLS + 10);
+                MAX_ROWS = (arena && arena.maxRows) || Math.max(def.maxRows, START_ROWS + 10);
 
                 hideStartUi();
                 reset();
@@ -2319,7 +2362,7 @@
                 }
 
                 // 竞争：先出局的一方输，另一位立刻获胜
-                if (teamMode === 'vs' && mode === 2 && partnerAlive(p)) {
+                if (teamMode === 'vs' && players.length > 1 && partnerAlive(p)) {
                     gameOver();
                     return;
                 }
@@ -2893,7 +2936,7 @@
 
             // 竞争模式下炮塔会把对方也算进目标
             function friendlyFireOn() {
-                return mode === 2 && TEAM_MODES[teamMode].friendlyFire;
+                return players.length > 1 && TEAM_MODES[teamMode].friendlyFire;
             }
 
             // 射程内最近的目标（敌人蛇头；竞争模式还包括对方的整条身体）
