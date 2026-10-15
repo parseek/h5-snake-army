@@ -503,10 +503,13 @@
                 </div>
                 <div class="tip" id="netKindTip"></div>
                 <div class="tip warn" id="netNativeWarn" hidden>
-                    ⚠ 当前是<b>浏览器版</b>：<b>局域网（自动搜房）</b>和<b>跨网（EasyTier）</b>都用不了。<br>
-                    网页不能监听端口、不能收 UDP 广播、也没有 mDNS 浏览 API ——
-                    「被别人搜到」这半边浏览器永远做不到；跨网还得能拉起 EasyTier 进程，更不可能。<br>
-                    这两种请用<b>桌面版</b>；浏览器版只能走「连接码」手动配对。
+                    ⚠ 当前是<b>浏览器版</b>。<br>
+                    <b>能做的</b>：「直连」可以<b>进别人的房间</b> —— 把对方的地址填进去就行
+                    （对方用桌面版开房）。<br>
+                    <b>做不了的</b>：「局域网自动搜房」和「跨网 EasyTier」，
+                    以及自己<b>开房</b>。网页不能监听端口、不能收 UDP 广播、也没有 mDNS 浏览 API ——
+                    「被别人搜到」这半边浏览器永远做不到；跨网还得能拉起 EasyTier 进程。<br>
+                    这些请用<b>桌面版</b>。想零配置也可以退回「连接码」手动配对。
                 </div>
                 <div class="row" id="netRoleRow">
                     <button class="startBtn small" id="netHostBtn">我是主机</button>
@@ -3569,17 +3572,22 @@
 
                 for (const id of CODE_ONLY) document.getElementById(id).hidden = !isCode;
                 netManualTipEl.hidden = !isCode;
-                // 浏览器版：选择器留着但把要原生侧的几种置灰，并给出原因。
-                // 直接藏起来只会让人以为功能没了，说不清为什么。
-                for (const id of ['kindLanBtn', 'kindWanBtn', 'kindDirectBtn']) {
+                // 浏览器版：只有「直连」的进房部分能用 ——
+                // 它本质是对着对方地址发几个 fetch，不需要任何原生能力。
+                // 局域网/跨网，以及自己开房，都要原生侧。
+                for (const [id, needsNative] of [
+                    ['kindLanBtn', true],
+                    ['kindWanBtn', true],
+                    ['kindDirectBtn', false],
+                ]) {
                     const b = document.getElementById(id);
-                    b.disabled = !NATIVE;
-                    b.title = NATIVE ? '' : '需要桌面版';
+                    b.disabled = needsNative && !NATIVE;
+                    b.title = b.disabled ? '需要桌面版' : '';
                 }
                 document.getElementById('netNativeWarn').hidden = !!NATIVE;
 
-                // 开房表单三种模式都要（开房这件事本身是一样的），只是搜索方式不同
-                const canHost = isLan || isWan || isDirect;
+                // 开房表单：只有桌面版才给（浏览器开不了房）
+                const canHost = NATIVE && (isLan || isWan || isDirect);
                 lanBoxEl.hidden = !canHost;
                 // 「搜索附近房间」靠 UDP 广播：直连模式不用，跨网模式等虚拟网起来再用
                 document.getElementById('lanScanRow').hidden = !(isLan || (isWan && etRunning));
@@ -3592,7 +3600,9 @@
                 if (isWan) etRefresh();
                 if (!isCode) {
                     document.getElementById('netStatus').textContent = isDirect
-                        ? '直连：一边「开个房间」把地址发出来，另一边粘地址搜索'
+                        ? (NATIVE
+                            ? '直连：一边「开个房间」把地址发出来，另一边粘地址搜索'
+                            : '直连：把桌面版房主的地址粘进来就能进房（浏览器版开不了房）')
                         : isLan
                             ? '同一个 Wi-Fi：一方「开个房间」，另一方「搜索附近房间」'
                             : '跨网：先启动虚拟局域网，之后和局域网一样搜';
@@ -3659,15 +3669,18 @@
                 await etRefresh();
             }
 
+            // 这几个在纯浏览器里也必须挂上：「直连」的进房只靠 fetch，
+            // 类型切换更是纯 UI。之前全塞在 if (NATIVE) 里，浏览器里点了没反应。
+            document.getElementById('kindLanBtn').addEventListener('click', function () { setNetKind('lan'); });
+            document.getElementById('kindWanBtn').addEventListener('click', function () { setNetKind('wan'); });
+            document.getElementById('kindDirectBtn').addEventListener('click', function () { setNetKind('direct'); });
+            document.getElementById('kindCodeBtn').addEventListener('click', function () { setNetKind('code'); });
+            document.getElementById('directSearchBtn').addEventListener('click', directSearch);
+            document.getElementById('directAddr').addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter') { ev.preventDefault(); directSearch(); }
+            });
+
             if (NATIVE) {
-                document.getElementById('kindLanBtn').addEventListener('click', function () { setNetKind('lan'); });
-                document.getElementById('kindWanBtn').addEventListener('click', function () { setNetKind('wan'); });
-                document.getElementById('kindDirectBtn').addEventListener('click', function () { setNetKind('direct'); });
-                document.getElementById('directSearchBtn').addEventListener('click', directSearch);
-                document.getElementById('directAddr').addEventListener('keydown', function (ev) {
-                    if (ev.key === 'Enter') { ev.preventDefault(); directSearch(); }
-                });
-                document.getElementById('kindCodeBtn').addEventListener('click', function () { setNetKind('code'); });
                 document.getElementById('etStartBtn').addEventListener('click', etStart);
                 document.getElementById('etStopBtn').addEventListener('click', etStop);
                 // 给个默认网络名，省得两边商量
@@ -3712,7 +3725,7 @@
 
             // 直连：不给广播留机会，直接问某个地址要房间列表
             async function directSearch() {
-                if (!NATIVE) return;
+                // 纯 fetch，不需要原生桥 —— 所以浏览器版也能进别人的房间
                 const noteEl = document.getElementById('directMsg');
                 const listEl = document.getElementById('directList');
                 listEl.innerHTML = '';
@@ -3864,7 +3877,8 @@
                 netSetTeam(teamMode);
                 // 桌面版有局域网/跨网两种；纯浏览器只有连接码 —— 但选择器仍然显示，
                 // 只是把那两种置灰并说明原因（见 setNetKind）
-                setNetKind(NATIVE ? 'lan' : 'code');
+                // 桌面版默认局域网；浏览器版默认直连（能进房），连接码仍可手动选
+                setNetKind(NATIVE ? 'lan' : 'direct');
                 lanListEl.innerHTML = '';
                 lanMsgEl.textContent = '同一个 Wi-Fi 下可以直接互相搜到';
                 netVerEl.textContent = '程序版本 v' + APP_VERSION + '（两边必须一致，否则直接拒绝连接）';
