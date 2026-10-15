@@ -38,6 +38,16 @@ npm run build        # 出 exe + NSIS 安装包
 ```
 
 前端文件**始终留在仓库根目录**，`dist/` 是构建时生成的、不入库。
+
+产物固定在这个路径（`scripts/pack-exe.mjs` 会把 exe 拷过来，
+不管机器上的 `CARGO_TARGET_DIR` 指到哪）：
+
+```
+src-tauri/target/release/snake-army.exe
+```
+
+中间产物仍然留在 `CARGO_TARGET_DIR`（本机是 `C:\rust-targets`），
+那里是全机器共享的缓存，项目里只放最终那一个 exe。
 Tauri 壳里没有任何业务逻辑，只负责给一个原生窗口和 WebView2。
 
 ### 3. 局域网主机（可选）
