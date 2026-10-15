@@ -3416,6 +3416,33 @@
             }
 
             // ------------------------------ 输入 ------------------------------
+            // ------------------------------ 本地操作入口 ------------------------------
+            // 只有一条本地蛇时（单人、联机），方向键和 WASD 两套都该驱动它；
+            // 本地双人时两套各管一条。联机客机则由这里把操作发给主机。
+            // 以前是写死的：方向键永远打 P1、WASD 永远打 P2，于是
+            // 客机按方向键没反应、单人和联机主机的 WASD 是死的、单人按 W 还会炸。
+            function dualLocal() {
+                return !netRole && players && players.length > 1;
+            }
+
+            function localTurn(dirName) {
+                if (state !== 'running' || !dirName) return;
+                if (netRole === 'guest') {
+                    netSend({ t: 'dir', dir: dirName });
+                    return;
+                }
+                if (players && players[0]) turn(players[0], dirName);
+            }
+
+            function localBuild() {
+                if (state !== 'running') return;
+                if (netRole === 'guest') {
+                    netSend({ t: 'build' });
+                    return;
+                }
+                if (players && players[0]) players[0].buildRequested = true;
+            }
+
             function onKeyDown(ev) {
                 const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
 
@@ -3437,15 +3464,18 @@
 
                 // P1 用方向键，P2 用 WASD。
                 // 联机时：客机的 WASD 变成网络输入，主机本地的 WASD 不再抢 P2
-                if (KEYMAP_P1[key]) {
+                const k1 = KEYMAP_P1[key];
+                const k2 = KEYMAP_P2[key];
+                if (k1 || k2) {
                     ev.preventDefault();
-                    if (netRole !== 'guest') turn(players[0], KEYMAP_P1[key]);
-                    return;
-                }
-                if (KEYMAP_P2[key]) {
-                    ev.preventDefault();
-                    if (netRole === 'guest') netSend({ t: 'dir', dir: KEYMAP_P2[key] });
-                    else if (netRole !== 'host') turn(players[1], KEYMAP_P2[key]);
+                    if (dualLocal()) {
+                        // 本地双人：两套各管一条
+                        if (k1) turn(players[0], k1);
+                        else turn(players[1], k2);
+                    } else {
+                        // 单人 / 联机：两套都归自己那条蛇
+                        localTurn(k1 || k2);
+                    }
                     return;
                 }
 
@@ -3458,18 +3488,20 @@
                     return;
                 }
 
-                // 建塔键：P1 用 /，P2 用 Q
+                // 建塔键：P1 用 /，P2 用 Q。单人 / 联机时两个键都算自己那条蛇。
                 if (state === 'running' && key === '/') {
                     ev.preventDefault();
-                    if (netRole === 'guest') netSend({ t: 'build' });
-                    else players[0].buildRequested = true;
+                    localBuild();
                     return;
                 }
 
                 if (state === 'running' && key === 'q') {
                     ev.preventDefault();
-                    if (netRole === 'guest') netSend({ t: 'build' });
-                    else if (netRole !== 'host' && players[1]) players[1].buildRequested = true;
+                    if (dualLocal()) {
+                        if (players[1]) players[1].buildRequested = true;
+                    } else {
+                        localBuild();
+                    }
                     return;
                 }
 
@@ -3498,7 +3530,8 @@
                 document.querySelectorAll('.operate .btn'),
                 function (btn) {
                     btn.addEventListener('click', function () {
-                        turn(players[0], btn.getAttribute('data-dir'));
+                        // 客机点屏幕方向键也要发给主机，不然本地是空操作
+                        localTurn(btn.getAttribute('data-dir'));
                     });
                 }
             );
@@ -3506,7 +3539,12 @@
             for (let i = 0; i < buildBtnEls.length; i++) {
                 (function (idx) {
                     buildBtnEls[idx].addEventListener('click', function () {
-                        if (players[idx]) players[idx].buildRequested = true;
+                        if (dualLocal()) {
+                            if (players[idx]) players[idx].buildRequested = true;
+                        } else {
+                            // 单人 / 联机：屏幕上只剩自己那一个按钮，按了就建
+                            localBuild();
+                        }
                     });
                 })(i);
             }
