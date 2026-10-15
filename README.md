@@ -160,6 +160,14 @@ release/snake-army-1.0.0-win-x64.zip      14.5 MB
 `easytier-core.exe` 会直接以 `0xC0000135`（STATUS_DLL_NOT_FOUND）退出，
 连日志都来不及打。这是实测踩出来的：第一版就漏了，包里的 EasyTier 起不来。
 
+**重新打包前先关掉正在运行的程序。** 链接阶段要写 `snake-army.exe`，
+如果还有实例开着，Windows 会锁住它，构建会直接以
+`拒绝访问。 (os error 5)` 失败（exit 1）。卡住就先：
+
+```bash
+taskkill /IM snake-army.exe /F
+```
+
 ### 发到 Gitee Releases
 
 仓库在 Gitee，而且这台机器的 hosts 把 github.com 整个指到了 127.0.0.1，所以发行版发 Gitee：
