@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "snake-army",
+  "version": "1.0.0",
+  "identifier": "com.krisurjw.snakearmy",
+  "build": {
+    "beforeDevCommand": "node scripts/sync-web.mjs",
+    "beforeBuildCommand": "node scripts/sync-web.mjs",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "贪吃蛇 · 联机对战",
+        "width": 920,
+        "height": 940,
+        "minWidth": 460,
+        "minHeight": 520,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

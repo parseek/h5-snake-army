@@ -1,0 +1,5 @@
+# Tauri / 构建产物
+/src-tauri/target/
+/src-tauri/gen/
+/dist/
+/node_modules/
