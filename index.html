@@ -184,6 +184,25 @@
             padding: 4px 12px;
         }
 
+        .start .lanBox pre {
+            width: 100%;
+            max-height: 140px;
+            overflow: auto;
+            margin: 6px 0 0;
+            padding: 6px;
+            font-size: 11px;
+            line-height: 1.35;
+            text-align: left;
+            white-space: pre-wrap;
+            word-break: break-all;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 4px;
+        }
+
+        .start .startBtn.is-on {
+            box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.75);
+        }
+
         .start .more {
             width: 88%;
             font-size: 12px;
@@ -367,7 +386,13 @@
             <div class="start" id="netPanel" hidden>
                 <div class="title">联机对战</div>
                 <div class="sub" id="netStatus">先选角色：主机负责开局，客机负责应答</div>
-                <div class="row">
+                <div class="row" id="netKindRow">
+                    <button class="startBtn small" id="kindLanBtn">局域网</button>
+                    <button class="startBtn small" id="kindWanBtn">跨网</button>
+                    <button class="startBtn small" id="kindCodeBtn">连接码</button>
+                </div>
+                <div class="tip" id="netKindTip"></div>
+                <div class="row" id="netRoleRow">
                     <button class="startBtn small" id="netHostBtn">我是主机</button>
                     <button class="startBtn small" id="netGuestBtn">我是客机</button>
                 </div>
@@ -384,14 +409,31 @@
                     <div class="tip" id="lanMsg">同一个 Wi-Fi 下可以直接互相搜到</div>
                     <div class="lanList" id="lanList"></div>
                 </div>
+                <div class="lanBox" id="wanBox" hidden>
+                    <div class="tip">两边填一样的网络名和密码，就能进同一张虚拟局域网；
+                        起来之后下面会出现「搜索房间」，和同一个 Wi-Fi 时用法完全一样。</div>
+                    <input id="etNetwork" class="netIce" spellcheck="false" placeholder="网络名（两边必须一样）" />
+                    <input id="etSecret" class="netIce" spellcheck="false" placeholder="网络密码（两边必须一样）" />
+                    <input id="etPeers" class="netIce" spellcheck="false" placeholder="公共节点，可留空；有公网机器就填 tcp://IP:11010" />
+                    <div class="row">
+                        <button class="startBtn small" id="etStartBtn">启动虚拟局域网</button>
+                        <button class="startBtn small" id="etStopBtn">停止</button>
+                    </div>
+                    <div class="tip" id="etMsg">EasyTier 未启动</div>
+                    <details class="more" id="etLogBox">
+                        <summary>EasyTier 日志</summary>
+                        <pre id="etLog"></pre>
+                    </details>
+                </div>
+
                 <div class="tip" id="netManualTip" hidden>—— 或者手动交换连接码 ——</div>
                 <textarea id="netCode" spellcheck="false" placeholder="连接码会出现在这里；对方发来的码也粘贴到这里"></textarea>
-                <div class="row">
+                <div class="row" id="netCopyRow">
                     <button class="startBtn small" id="netCopyBtn">复制</button>
                     <button class="startBtn small" id="netUseBtn" disabled>用这段码</button>
                 </div>
                 <div class="tip" id="netHint">主机：点「我是主机」生成连接码</div>
-                <details class="more">
+                <details class="more" id="netMore">
                     <summary>跨网连不上怎么办？</summary>
                     <div>
                         公共免费 TURN 基本都失效了，得自建（coturn）或买一个商业 TURN，
@@ -3241,6 +3283,119 @@
                 return lanBase;
             }
 
+            // ------------------------------ 联机类型 ------------------------------
+            // 三种类型：局域网（同一 Wi-Fi 自动搜房）/ 跨网（先用 EasyTier 组虚拟局域网）/
+            // 连接码（手动交换）。浏览器版只有连接码一种，选择器整个隐藏。
+            let netKind = 'lan';
+            let etTimer = null;
+            let etRunning = false;
+
+            const KIND_TIP = {
+                lan: '局域网：同一个 Wi-Fi 下自动搜到房间',
+                wan: '跨网：两边用同一个网络名和密码，EasyTier 会把你们接进同一张虚拟局域网',
+                code: '连接码：手动把码发给对方（浏览器版只有这一种）'
+            };
+
+            // 只在「连接码」类型下出现的元素
+            const CODE_ONLY = ['netRoleRow', 'netCode', 'netCopyRow', 'netHint', 'netMore', 'netIce', 'netPeerIp'];
+            const KIND_BTNS = { lan: 'kindLanBtn', wan: 'kindWanBtn', code: 'kindCodeBtn' };
+
+            function setNetKind(kind) {
+                netKind = kind;
+                const isLan = kind === 'lan';
+                const isWan = kind === 'wan';
+                const isCode = kind === 'code';
+
+                document.getElementById('netKindTip').textContent = KIND_TIP[kind] || '';
+
+                for (const id of CODE_ONLY) document.getElementById(id).hidden = !isCode;
+                netManualTipEl.hidden = !isCode;
+
+                // 局域网块：局域网类型一直有；跨网类型要等虚拟网起来了再放出来
+                lanBoxEl.hidden = !(isLan || (isWan && etRunning));
+                document.getElementById('wanBox').hidden = !isWan;
+
+                for (const k in KIND_BTNS) {
+                    document.getElementById(KIND_BTNS[k]).classList.toggle('is-on', k === kind);
+                }
+                if (isWan) etRefresh();
+                if (isLan || !isCode) {
+                    document.getElementById('netStatus').textContent = isLan
+                        ? '同一个 Wi-Fi：一方「开个房间」，另一方「搜索房间」'
+                        : '跨网：先启动虚拟局域网，之后和局域网一样搜';
+                }
+            }
+
+            // ------------------------------ EasyTier 跨网 ------------------------------
+            async function etRefresh() {
+                if (!NATIVE) return null;
+                let st = null;
+                try { st = await NATIVE.invoke('et_status'); } catch (e) { return null; }
+                etRunning = !!(st && st.running);
+                const ip = (st && st.virtualIp) ? ('　虚拟 IP ' + st.virtualIp) : '';
+                const msg = document.getElementById('etMsg');
+                if (etRunning) {
+                    msg.textContent = 'EasyTier 运行中（PID ' + st.pid + '）' + ip;
+                } else if (st && st.logs && st.logs.length) {
+                    msg.textContent = 'EasyTier 已退出 —— 多半是没拿到管理员权限（看下面日志）';
+                } else {
+                    msg.textContent = 'EasyTier 未启动';
+                }
+                const log = document.getElementById('etLog');
+                log.textContent = ((st && st.logs) || []).slice(-80).join('\n');
+                log.scrollTop = log.scrollHeight;
+                // 虚拟网一起来，就把「搜索房间」放出来
+                if (netKind === 'wan') lanBoxEl.hidden = !etRunning;
+                return st;
+            }
+
+            async function etStart() {
+                const btn = document.getElementById('etStartBtn');
+                btn.disabled = true;
+                try {
+                    const chk = await NATIVE.invoke('et_check');
+                    if (!chk.found) {
+                        document.getElementById('etMsg').textContent =
+                            '没找到 easytier-core.exe —— 在项目目录跑一次 npm run fetch:easytier';
+                        return;
+                    }
+                    if (!chk.admin) {
+                        // 不阻止启动：让用户看到 EasyTier 自己的日志，比一句"权限不够"更有用
+                        document.getElementById('etMsg').textContent =
+                            '⚠ 当前不是管理员：EasyTier 建虚拟网卡需要管理员权限';
+                    }
+                    await NATIVE.invoke('et_start', {
+                        network: document.getElementById('etNetwork').value.trim() || 'snake-army',
+                        secret: document.getElementById('etSecret').value.trim() || 'snake-army',
+                        peers: document.getElementById('etPeers').value.trim() || null,
+                        broadcastRelay: true
+                    });
+                    if (etTimer) clearInterval(etTimer);
+                    etTimer = setInterval(etRefresh, 1500);
+                    await etRefresh();
+                } catch (e) {
+                    document.getElementById('etMsg').textContent = '启动失败：' + e.message;
+                }
+                btn.disabled = false;
+            }
+
+            async function etStop() {
+                if (etTimer) { clearInterval(etTimer); etTimer = null; }
+                await NATIVE.invoke('et_stop');
+                etRunning = false;
+                await etRefresh();
+            }
+
+            if (NATIVE) {
+                document.getElementById('kindLanBtn').addEventListener('click', function () { setNetKind('lan'); });
+                document.getElementById('kindWanBtn').addEventListener('click', function () { setNetKind('wan'); });
+                document.getElementById('kindCodeBtn').addEventListener('click', function () { setNetKind('code'); });
+                document.getElementById('etStartBtn').addEventListener('click', etStart);
+                document.getElementById('etStopBtn').addEventListener('click', etStop);
+                // 给个默认网络名，省得两边商量
+                document.getElementById('etNetwork').value = 'snake-' + Math.random().toString(36).slice(2, 7);
+            }
+
             function lanStopPolling() {
                 if (lanPoll) { clearInterval(lanPoll); lanPoll = null; }
             }
@@ -3381,9 +3536,10 @@
                 netUseBtnEl.disabled = true;
                 netUseBtnEl.textContent = '用这段码';
                 netSetTeam(teamMode);
-                // 只有桌面版（Rust 侧在监听）才有「搜索房间」；纯浏览器里整块隐藏
-                lanBoxEl.hidden = !NATIVE;
-                netManualTipEl.hidden = !NATIVE;
+                // 桌面版有局域网/跨网两种；纯浏览器只有连接码
+                document.getElementById('netKindRow').hidden = !NATIVE;
+                document.getElementById('netKindTip').hidden = !NATIVE;
+                setNetKind(NATIVE ? 'lan' : 'code');
                 lanListEl.innerHTML = '';
                 lanMsgEl.textContent = '同一个 Wi-Fi 下可以直接互相搜到';
                 netVerEl.textContent = '程序版本 v' + APP_VERSION + '（两边必须一致，否则直接拒绝连接）';

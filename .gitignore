@@ -1,5 +1,7 @@
 # Tauri / 构建产物
 /src-tauri/target/
+# EasyTier 二进制（23MB，用 npm run fetch:easytier 下载，不入库）
+/src-tauri/binaries/
 /src-tauri/gen/
 /dist/
 /node_modules/

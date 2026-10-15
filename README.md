@@ -84,26 +84,69 @@ python lan-host.py 8080
 | 信令 HTTP | 优先 **47812**，被占（例如同机开了第二个实例）则退回系统随机分配 |
 | UDP 探测 | 固定 **47811**；被占则本机不做应答，其它功能照常 |
 
-### 跨网（公网 IP 不同）
+### 跨网（EasyTier 虚拟局域网）
 
-WebRTC 直连在对称 NAT 下会失败。公共免费 TURN 实测全部失效，所以要跨网就得：
+联机面板上选「**跨网**」：
 
-- 把 `lan-host.py` 跑在一台有公网地址的机器上，两边都填它的地址；或者
-- 自建 coturn / 买商业 TURN，按 `turn:主机:端口|用户名|密码` 填进「ICE 服务器」框。
+1. 先准备二进制：`npm run fetch:easytier`
+   （走 ghfast.top 镜像下载，因为不少机器把 github.com 整个 hosts 掉了）
+2. 两边填**一样的**网络名和密码 →「启动虚拟局域网」
+3. 虚拟网起来之后，面板上会出现「搜索房间 / 开个房间」—— 和同一个 Wi-Fi 时**用法完全一样**
+
+原理：EasyTier 会把你们接进同一张虚拟局域网，而它有一个
+`--enable-udp-broadcast-relay`（仅 Windows）会把本机 UDP 广播转发给对端节点，
+官方说明就是「帮助局域网游戏发现房间」—— 正好让上面那套 UDP 搜房跨网生效。
+所以跨网不是另写一套联机，而是**把跨网变成局域网**。
+
+**两个前提**：
+
+- **需要管理员权限**：EasyTier 建虚拟网卡绕不开 TUN/wintun。没管理员时程序会明确提示，
+  而不是让你干等；EasyTier 自己的日志在面板里也能看到。
+- **需要一个会合点**：官方的 `public.easytier.cn` 已经 NXDOMAIN 了。
+  可以填社区共享节点的 IP（`tcp://IP:11010`），或者自己起一台 ——
+  所谓公共共享节点，就是「网络名密码相同的普通 EasyTier 节点」，放在有公网 IP 的机器上即可。
+
+**不装 EasyTier 的退路**：面板上的「连接码」类型仍然可用；
+配合自建 coturn / 商业 TURN（填进「ICE 服务器」框）一样能跨网。
+
+### 联机类型对照
+
+| 类型 | 需要什么 | 怎么用 |
+|---|---|---|
+| 局域网 | 同一个 Wi-Fi | 一边「开个房间」，另一边「搜索房间」→ 加入 |
+| 跨网 | 管理员权限 + 会合点 | 两边填一样的网络名密码 → 起来后同局域网 |
+| 连接码 | 无 | 手动把码发给对方 |
+
+浏览器版只有「连接码」一种，类型选择器整个隐藏 —— 那两种都要原生侧才做得到。
 
 ## 目录
 
 ```
-index.html             前端全部代码（HTML + CSS + JS 都在这一个文件里）
-assets/global.css      只有 body { margin: 0 }
-lan-host.py            可选的局域网主机 / 信令中转（Python 标准库）
-src-tauri/             Tauri 壳（Rust）
-scripts/sync-web.mjs   把前端拷进 dist/
+index.html                  前端全部代码（HTML + CSS + JS 都在这一个文件里）
+assets/global.css           只有 body { margin: 0 }
+lan-host.py                 可选的局域网主机 / 信令中转（Python 标准库）
+src-tauri/src/lan.rs        内嵌信令服务 + UDP 广播探测
+src-tauri/src/easytier.rs   EasyTier 进程管理（跨网）
+src-tauri/binaries/         EasyTier 二进制（不入库，npm run fetch:easytier 下载）
+scripts/sync-web.mjs        把前端拷进 dist/
+scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/
+scripts/fetch-easytier.mjs  下载 EasyTier
 ```
 
 ## 联机的已知边界
 
-- 只在**本机回环**验证过（两个独立浏览器实例互相连接）；局域网 / 跨公网需要两台真机才能测。
-- 公共免费 TURN 实测**全部失效**，所以跨网在对称 NAT 下打不通 —— 要么自建 coturn，
-  要么买一个商业 TURN，按 `turn:主机:端口|用户名|密码` 填进「ICE 服务器」框。
+已验证：
+
+- 局域网房间端到端跑通（两个无头浏览器 + 真实内嵌信令服务）：搜索到房间 → 点加入 →
+  双方 `open=true`、`count=2`、`errs=[]`。
+- EasyTier 的进程管理跑通（有单元测试）：能找到二进制、按参数拉起、读到日志、停掉。
+
+未验证 / 有前提：
+
+- **真实的跨网连接没在这台机器上验证过**：EasyTier 建虚拟网卡需要管理员权限，
+  而当前账户不是管理员（`is_admin = false`，也没有 wintun 驱动）。
+  要真正跑通，需要以管理员身份运行，并且两台机器都在。
+- 官方的 `public.easytier.cn` 已失效，得另外找会合点。
+- WebRTC 直连只在**本机回环**验证过；真实局域网 / 公网需要两台真机。
+- 公共免费 TURN 实测**全部失效**，所以纯 WebRTC 方案在对称 NAT 下打不通。
 - 同一个 Wi-Fi 下如果连不上，直接填对方的局域网 IP（面板上的第二个输入框）通常能解决。
