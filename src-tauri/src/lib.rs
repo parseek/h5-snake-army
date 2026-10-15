@@ -22,6 +22,13 @@ pub fn run() {
             easytier::et_stop,
             easytier::et_status
         ])
-        .run(tauri::generate_context!())
-        .expect("Tauri 启动失败");
+        .build(tauri::generate_context!())
+        .expect("Tauri 初始化失败")
+        .run(|_app, event| {
+            // EasyTier 是我们拉起来的子进程，主程序退出时不会自动带走它。
+            // 不收拾的话它会一直占着 11010-11013，下次启动就撞端口 —— 实测踩过。
+            if let tauri::RunEvent::Exit = event {
+                easytier::et_stop();
+            }
+        });
 }
