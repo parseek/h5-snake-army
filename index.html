@@ -186,6 +186,17 @@
             line-height: 1;
         }
 
+        .start .netIce {
+            width: 88%;
+            padding: 5px 6px;
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 10px;
+            color: #222;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 6px;
+        }
+
         .start textarea {
             width: 88%;
             height: 84px;
@@ -289,6 +300,12 @@
                     <button class="startBtn small" id="netUseBtn" disabled>用这段码</button>
                 </div>
                 <div class="tip" id="netHint">主机：点「我是主机」生成连接码</div>
+                <div class="tip" id="netTurn">跨网连不上？公共免费 TURN 基本都失效了，
+                    需要自建一个（coturn）或买一个，把地址按 turn:主机:端口|用户名|密码 填到上面</div>
+                <input id="netIce" class="netIce" spellcheck="false"
+                       placeholder="ICE 服务器（留空用内置 STUN；要中继就填 turn:主机:端口|用户名|密码）" />
+                <input id="netPeerIp" class="netIce" spellcheck="false"
+                       placeholder="可选：对方的局域网 IP（同一个 Wi-Fi 却连不上时填这个，比如 192.168.1.23）" />
                 <div class="tip" id="netVer"></div>
                 <div class="tip"><a href="#" id="netBack">← 返回模式选择</a></div>
             </div>
@@ -406,8 +423,25 @@
             const APP_VERSION = '1.0.0';
             const NET_TAG = 'SNK';          // 连接码的 Magic
             const NET_SEND_MS = 33;         // 主机发快照的间隔（约 30Hz）
-            const NET_CONNECT_MS = 20000;   // 打洞超时
-            const NET_STUN = 'stun:stun.l.google.com:19302';
+            const NET_CONNECT_MS = 25000;   // 打洞超时
+            const NET_GATHER_MS = 8000;     // 等 ICE 收集的上限
+
+            // STUN 多备几家、且分两组：同一组里任意一家通了就能拿到公网候选。
+            // 443 端口那家是为了穿一些只放行 443 的防火墙。
+            const NET_ICE_DEFAULT = [
+                { urls: [
+                    'stun:stun.qq.com:3478',
+                    'stun:stun.miwifi.com:3478',
+                    'stun:stun.chat.bilibili.com:3478',
+                    'stun:stun.sipnet.net:3478'
+                ] },
+                { urls: [
+                    'stun:stun.l.google.com:19302',
+                    'stun:stun1.l.google.com:19302',
+                    'stun:stun.cloudflare.com:3478',
+                    'stun:stun.nextcloud.com:443'
+                ] }
+            ];
 
             // 炮塔（消耗自身长度建造）
             const TURRET_COST = 2;          // 建一座塔消耗的身长（节）
@@ -566,6 +600,8 @@
             const netHintEl = document.getElementById('netHint');
             const netVerEl = document.getElementById('netVer');
             const netCodeEl = document.getElementById('netCode');
+            const netIceEl = document.getElementById('netIce');
+            const netPeerIpEl = document.getElementById('netPeerIp');
             const netHostBtnEl = document.getElementById('netHostBtn');
             const netGuestBtnEl = document.getElementById('netGuestBtn');
             const netCoopBtnEl = document.getElementById('netCoopBtn');
@@ -1518,16 +1554,106 @@
                 return '出错了：' + k;
             }
 
-            // 等 ICE 收集完再出码，否则候选不全连不上；但没网时也不能卡死
+            // 自填的 ICE 服务器优先，内置的兜底；一行一个，
+            // 写 turn:主机:端口|用户名|密码 就带账号
+            function netIceServers() {
+                const list = [];
+                const raw = String(netIceEl.value || '').split(/[\n,]/);
+                for (let i = 0; i < raw.length; i++) {
+                    const s = raw[i].trim();
+                    if (!s) continue;
+                    const p = s.split('|');
+                    if (p.length >= 3) {
+                        list.push({ urls: p[0].trim(), username: p[1].trim(), credential: p[2].trim() });
+                    } else {
+                        list.push({ urls: s });
+                    }
+                }
+                for (let i = 0; i < NET_ICE_DEFAULT.length; i++) list.push(NET_ICE_DEFAULT[i]);
+                return list;
+            }
+
+            // 一边收候选一边分类统计 —— 出码时和打洞失败时都要拿它说话
+            function netWatchIce(pc) {
+                pc._c = { host: 0, mdns: 0, srflx: 0, relay: 0 };
+                pc.addEventListener('icecandidate', function (ev) {
+                    const c = ev.candidate;
+                    if (!c) return;
+                    const s = c.candidate;
+                    if (s.indexOf(' typ host') !== -1) {
+                        pc._c.host++;
+                        if (s.indexOf('.local') !== -1) pc._c.mdns++;
+                    } else if (s.indexOf(' typ srflx') !== -1) {
+                        pc._c.srflx++;
+                    } else if (s.indexOf(' typ relay') !== -1) {
+                        pc._c.relay++;
+                    }
+                });
+
+                // 连不上时把状态也说一声，别只报超时
+                pc.addEventListener('iceconnectionstatechange', function () {
+                    if (pc.iceConnectionState === 'failed' && !netOpen) {
+                        netSetStatus('直连失败', netDiag(pc) + '；跨网打不通的话需要在上面填一个 TURN 中继');
+                    }
+                });
+            }
+
+            // 局域网兜底：Chrome 把本地候选写成 mDNS 名（xxx.local），对方经常解析不了。
+            // 这里让人手填一个 IP，直接把候选里的地址换掉补进去。
+            function netPatchIp(pc, ip) {
+                if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return 0;
+                const sdp = (pc.remoteDescription && pc.remoteDescription.sdp) || '';
+                const re = /a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ host[^\r\n]*/g;
+
+                let m = null;
+                let n = 0;
+                while ((m = re.exec(sdp)) !== null) {
+                    const cand = 'candidate:' + m[1] + ' ' + m[2] + ' ' + m[3] + ' ' + m[4] + ' ' +
+                        ip + ' ' + m[6] + ' typ host';
+                    try {
+                        pc.addIceCandidate({ candidate: cand, sdpMid: '0', sdpMLineIndex: 0 });
+                        n++;
+                    } catch (e) { /* 加不进去就算了，原来的候选还在 */ }
+                }
+                return n;
+            }
+
+            function netDiag(pc) {
+                const c = (pc && pc._c) || { host: 0, mdns: 0, srflx: 0, relay: 0 };
+                let n = 0;
+                try { n = (pc.getConfiguration().iceServers || []).length; } catch (e) { n = -1; }
+                return '候选：本地 ' + c.host + (c.mdns ? '（其中 mDNS ' + c.mdns + '）' : '') +
+                    ' / 公网 ' + c.srflx + ' / 中继 ' + c.relay + '；ICE 服务器 ' + n + ' 组';
+            }
+
+            // 一个公网/中继候选都没有的话，跨网基本没戏，出码时就先把话说明白
+            function netIceWarn(pc, gatherOk) {
+                if (!gatherOk) {
+                    return '　⚠ 候选没收集完（网络慢或 STUN 不通），连不上就重新点一次「我是主机」';
+                }
+                const c = (pc && pc._c) || {};
+                if (((c.srflx || 0) + (c.relay || 0)) === 0) {
+                    return '　⚠ 本机没拿到公网候选，跨网多半连不上（同一局域网仍可一试）';
+                }
+                return '';
+            }
+
+            // 等 ICE 收集完成再出码 —— 提前出码会让码里缺公网候选，跨网直接打不通。
+            // 返回是否真的收集完了（超时返回 false，界面上要提示重试）。
             function netWaitIce(pc) {
                 return new Promise(function (resolve) {
-                    if (pc.iceGatheringState === 'complete') { resolve(); return; }
-                    const timer = setTimeout(resolve, 3000);
+                    if (pc.iceGatheringState === 'complete') { resolve(true); return; }
+
+                    let done = false;
+                    function finish(ok) {
+                        if (done) return;
+                        done = true;
+                        clearTimeout(timer);
+                        resolve(ok);
+                    }
+                    const timer = setTimeout(function () { finish(false); }, NET_GATHER_MS);
                     pc.addEventListener('icegatheringstatechange', function () {
-                        if (pc.iceGatheringState === 'complete') {
-                            clearTimeout(timer);
-                            resolve();
-                        }
+                        if (pc.iceGatheringState === 'complete') finish(true);
                     });
                 });
             }
@@ -1587,16 +1713,18 @@
             async function netHostCreate() {
                 netLeave();
                 netRole = 'host';
-                netPC = new RTCPeerConnection({ iceServers: [{ urls: NET_STUN }] });
+                netPC = new RTCPeerConnection({ iceServers: netIceServers() });
+                netWatchIce(netPC);
                 netDC = netPC.createDataChannel('snake', { ordered: true });
                 netBindChannel(netDC);
 
                 await netPC.setLocalDescription(await netPC.createOffer());
-                await netWaitIce(netPC);
+                const gatherOk = await netWaitIce(netPC);
 
                 netCodeEl.value = netEncode(netPC.localDescription.sdp, 'offer');
                 netSetStatus('① 把下面的连接码发给对方',
-                    '本机 v' + APP_VERSION + '；② 对方发回应答码后，粘贴到框里点「接受应答码」');
+                    netDiag(netPC) + netIceWarn(netPC, gatherOk) +
+                    '　v' + APP_VERSION + '；② 对方发回应答码后粘到框里点「接受应答码」');
                 netUseBtnEl.disabled = false;
                 netUseBtnEl.textContent = '接受应答码';
             }
@@ -1605,8 +1733,10 @@
                 if (!netPC || netRole !== 'host') throw new Error('NO_HOST');
                 const d = netDecode(netCodeEl.value, 'answer');
                 await netPC.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+                const patched = netPatchIp(netPC, netPeerIpEl.value.trim());
                 netSetStatus('已收到应答码，正在打洞…',
-                    '对方程序版本 v' + d.version + '，与本机一致 ✓');
+                    '对方程序版本 v' + d.version + '，与本机一致 ✓' +
+                    (patched ? '；已按你填的 IP 补了 ' + patched + ' 条候选' : ''));
                 netUseBtnEl.disabled = true;
                 netStartConnectTimer();
             }
@@ -1616,19 +1746,23 @@
                 const d = netDecode(netCodeEl.value, 'offer');
                 netLeave();
                 netRole = 'guest';
-                netPC = new RTCPeerConnection({ iceServers: [{ urls: NET_STUN }] });
+                netPC = new RTCPeerConnection({ iceServers: netIceServers() });
+                netWatchIce(netPC);
                 netPC.addEventListener('datachannel', function (ev) {
                     netDC = ev.channel;
                     netBindChannel(netDC);
                 });
 
                 await netPC.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+                const patched = netPatchIp(netPC, netPeerIpEl.value.trim());
                 await netPC.setLocalDescription(await netPC.createAnswer());
-                await netWaitIce(netPC);
+                const gatherOk = await netWaitIce(netPC);
 
                 netCodeEl.value = netEncode(netPC.localDescription.sdp, 'answer');
                 netSetStatus('② 把下面的应答码发回给主机',
-                    '本机 v' + APP_VERSION + '，对方 v' + d.version + ' ✓；主机填进去就开局');
+                    netDiag(netPC) + netIceWarn(netPC, gatherOk) +
+                    (patched ? '　已按你填的 IP 补了 ' + patched + ' 条候选' : '') +
+                    '　v' + APP_VERSION + '，对方 v' + d.version + ' ✓');
                 netUseBtnEl.disabled = true;
                 netStartConnectTimer();
             }
@@ -1638,10 +1772,20 @@
                 if (netConnTimer) clearTimeout(netConnTimer);
                 netConnTimer = setTimeout(function () {
                     netConnTimer = null;
-                    if (!netOpen) {
-                        netSetStatus('打洞超时了',
-                            '可能是网络不通：试试两边接同一个 Wi-Fi，或确认浏览器允许联机');
+                    if (netOpen) return;
+
+                    // 按候选情况分诊，别只丢一句"超时"
+                    const c = (netPC && netPC._c) || { host: 0, mdns: 0, srflx: 0, relay: 0 };
+                    let why;
+                    if (!c.srflx && !c.relay) {
+                        why = '本机压根没拿到公网候选（STUN 不通）：检查网络/防火墙，或在上面填一个能用的 STUN';
+                    } else if (!c.relay) {
+                        why = '双方都拿到了公网地址却打不通，多半是对称 NAT 或防火墙。同一局域网一般能直连；' +
+                            '跨网这条路需要在上面填一个 TURN 中继';
+                    } else {
+                        why = '已经有中继候选还是不通，检查 TURN 的地址和账号密码';
                     }
+                    netSetStatus('打洞超时了', why + '　（' + netDiag(netPC) + '）');
                 }, NET_CONNECT_MS);
             }
 
