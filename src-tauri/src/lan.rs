@@ -31,6 +31,13 @@ struct Room {
     desc: String,
     /// 房主的玩家名
     player: String,
+    /// 场地初始宽高（格）
+    cols: u16,
+    rows: u16,
+    /// 玩家上限
+    max_players: u16,
+    /// 现在几个人（含房主）。房主轮询应答码时会顺带更新。
+    players: u16,
     offer: String,
     answer: Option<String>,
     seen: u64,
@@ -175,6 +182,10 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                             "name": r.name,
                             "desc": r.desc,
                             "player": r.player,
+                            "cols": r.cols,
+                            "rows": r.rows,
+                            "maxPlayers": r.max_players,
+                            "players": r.players,
                             "taken": r.answer.is_some(),
                             // 已经有人应答就是 2 人满员（房主 + 来客）
                             "players": if r.answer.is_some() { 2 } else { 1 },
@@ -206,9 +217,15 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
         ("GET", "/api/answer") => {
             sweep(rooms);
             let id = query_of(target, "id").unwrap_or_default();
+            // 房主每 700ms 轮询一次，顺带把「现在几个人」报上来，
+            // 来客在房间列表里才能看到实时人数，而不是写死的 1/2。
+            let reported = query_of(target, "players").and_then(|v| v.parse::<u16>().ok());
             let found = rooms.lock().ok().and_then(|mut m| {
                 let r = m.get_mut(&id)?;
                 r.seen = now_secs();
+                if let Some(n) = reported {
+                    r.players = n.max(1);
+                }
                 Some(r.answer.clone().unwrap_or_default())
             });
             match found {
@@ -243,6 +260,16 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                     .to_string()
                     .if_empty(fallback)
             };
+            let num = |k: &str, lo: u16, hi: u16, dflt: u16| -> u16 {
+                v.get(k)
+                    .and_then(|x| x.as_u64())
+                    .map(|n| n as u16)
+                    .unwrap_or(dflt)
+                    .clamp(lo, hi)
+            };
+            let cols = num("cols", 10, 60, 30);
+            let rows = num("rows", 8, 40, 15);
+            let max_players = num("maxPlayers", 2, 6, 2);
             let name = take("name", 24, &host);
             let desc = take("desc", 80, "");
             let player = take("player", 16, &host);
@@ -254,6 +281,10 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                         name,
                         desc,
                         player,
+                        cols,
+                        rows,
+                        max_players,
+                        players: 1,          // 一开始只有房主
                         offer: offer.to_string(),
                         answer: None,
                         seen: now_secs(),
