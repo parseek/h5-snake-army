@@ -54,7 +54,9 @@ function cleanup() {
             'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
         ], { stdio: 'ignore' });
     } catch (e) { /* 清理失败不致命 */ }
-    try { rmSync(profile, { recursive: true, force: true }); } catch (e) { }
+    for (const p of [profile, profile + '-dump']) {
+        try { rmSync(p, { recursive: true, force: true }); } catch (e) { }
+    }
 }
 
 if (!existsSync(EDGE)) {
@@ -72,24 +74,35 @@ const child = spawn(EDGE, flags.concat([base + '/' + page]), { stdio: 'ignore', 
 console.log('[smoke] 起了一个隔离的无头浏览器 (profile=' + profile + ')');
 console.log('[smoke] 页面 ' + base + '/' + page + '，等 ' + waitMs + 'ms');
 
+// --dump-dom / --screenshot 是**第二次**启动 Edge。它不能用第一个实例的 profile：
+// 同一个 --user-data-dir 被占用时，Edge 会把新进程转交给已有实例然后立刻退出，
+// execFileSync 就抛错（以前这里报的「--dom 失败」就是这个，不是页面问题）。
+const dumpProfile = profile + '-dump';
+const dumpFlags = flags.map((f) => f.startsWith('--user-data-dir=') ? '--user-data-dir=' + dumpProfile : f);
+
+function why(e) {
+    const err = e && e.stderr ? String(e.stderr).trim() : '';
+    return err || (e && e.message) || String(e);
+}
+
 let exitCode = 0;
 setTimeout(() => {
     if (wantDom) {
         try {
-            const dom = execFileSync(EDGE, flags.concat([
+            const dom = execFileSync(EDGE, dumpFlags.concat([
                 '--virtual-time-budget=3000', '--dump-dom', base + '/' + page,
             ]), { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
             console.log('[smoke] ---- DOM ----');
             console.log(dom);
-        } catch (e) { console.error('[smoke] --dom 失败: ' + e.message); }
+        } catch (e) { console.error('[smoke] --dom 失败: ' + why(e)); }
     }
     if (shot) {
         try {
-            execFileSync(EDGE, flags.concat([
+            execFileSync(EDGE, dumpFlags.concat([
                 '--virtual-time-budget=3000', '--screenshot=' + shot, base + '/' + page,
             ]), { stdio: 'ignore' });
             console.log('[smoke] 截图: ' + shot);
-        } catch (e) { console.error('[smoke] 截图失败: ' + e.message); }
+        } catch (e) { console.error('[smoke] 截图失败: ' + why(e)); }
     }
     try { child.kill(); } catch (e) { }
     cleanup();

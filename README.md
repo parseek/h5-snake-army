@@ -129,16 +129,24 @@ CORS 在内嵌服务上已经开了 `*`。
 
 浏览器版只有「连接码」一种，类型选择器整个隐藏 —— 那两种都要原生侧才做得到。
 
-## 验证页面（重要：别按进程名杀浏览器）
+## 验证页面（两个工具；重要：别按进程名杀浏览器）
 
-改完页面要跑一遍真实浏览器验证时，用这个：
+改完页面要跑一遍真实浏览器验证时：
 
 ```bash
-# 先把 dist/ 服务出来
-python -m http.server 9211 --bind 127.0.0.1 --directory dist
-# 另开一个终端
-node scripts/smoke.mjs _probe.html --wait 6000
+npm run probe      # 一键：同步 dist/ -> 起静态服务 -> 无头 Edge 跑探针 -> 打报告
+npm run serve      # 只想自己打开看时：静态服务（默认 9211，可传端口）
 ```
+
+`npm run probe`（`scripts/probe-web.mjs`）做两件事，缺一个、错一个都会红着退出：
+
+* 把 `assets/` 与主脚本里**所有**顶层声明的名字列出来，在真实页面上逐个 `typeof` 一遍
+  —— 拆文件最容易犯的错就是「函数搬过去了但没人定义」或「忘了加 `<script src>`」
+* 真的开局跑几百帧：走位、建塔、拓宽、敌人推进、快照往返、暂停、双人、重开
+
+它起的是隔离的无头 Edge（`scripts/smoke.mjs`），探针页把结果 POST 回
+`scripts/serve-dist.mjs` 的 `/__probe` 口。（不用 `--dump-dom`：dump 走虚拟时间，
+和真实 rAF 主循环对不上，读到的永远是「pending」。）
 
 **规矩：收尾只能杀自己起的那个浏览器实例，绝不能按进程名杀。**
 ```powershell
@@ -148,18 +156,30 @@ Get-Process -Name 'msedge','msedgewebview2' | Stop-Process -Force   # ✗ 千万
 
 `scripts/smoke.mjs` 的做法是：每个实例用独立的 `--user-data-dir`，
 收尾时只杀**命令行里带这个专属目录**的进程，并延迟再清一次（无头浏览器会拉一串子进程）。
+`--dump-dom` / `--screenshot` 是第二次启动 Edge，用的是另一个 profile 目录，
+否则新进程会被已有实例转交掉、直接报错。
 实测跑完前后 `msedge` 进程数完全不变。
 
 ## 目录
 
 ```
-index.html                  前端全部代码（HTML + CSS + JS 都在这一个文件里）
+index.html                  引导层：HTML + CSS + 版本号 + 主循环（guestTick / frame）
+assets/config.js            基础配置：常量 / 配色 / 键位 / 玩家定义 / 画布与元素引用
+assets/state.js             全局状态（players / enemies / apples …）+ 存档读写
+assets/net.js               联机传输层：连接码编解码、ICE 工具（纯逻辑，不碰游戏状态）
+assets/game.js              游戏规则：走位、道具、碰撞、敌人 AI、炮塔、开局与重开
+assets/render.js            渲染：棋盘 / 蛇 / 敌人 / 道具 / 炮塔 / HUD
+assets/input.js             输入：键盘、屏幕按钮、本地操作入口
+assets/net-session.js       联机会话：握手、快照、状态条、房间与联机类型切换
 assets/global.css           只有 body { margin: 0 }
 lan-host.py                 可选的局域网主机 / 信令中转（Python 标准库）
 src-tauri/src/lan.rs        内嵌信令服务 + UDP 广播探测
 src-tauri/src/easytier.rs   EasyTier 进程管理（跨网）
 src-tauri/binaries/         EasyTier 二进制（不入库，npm run fetch:easytier 下载）
 scripts/sync-web.mjs        把前端拷进 dist/
+scripts/serve-dist.mjs      验证用静态服务（带 /__probe 回传口）
+scripts/smoke.mjs           安全地起一个隔离的无头浏览器
+scripts/probe-web.mjs       端到端探针（npm run probe）
 scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/
 scripts/fetch-easytier.mjs  下载 EasyTier
 ```
@@ -169,7 +189,7 @@ scripts/fetch-easytier.mjs  下载 EasyTier
 ### 出一个「完整可运行」的包
 
 ```bash
-npm run dist
+npm run build
 ```
 
 依次做三件事：下载 EasyTier（还没有的话）→ 编译并打包 exe → 组装便携包。产物：
