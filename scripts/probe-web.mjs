@@ -36,7 +36,7 @@ const DIST = join(root, 'dist');
 const WEB_FILES = [
     'assets/config.js', 'assets/state.js', 'assets/net.js',
     'assets/game.js', 'assets/render.js', 'assets/input.js', 'assets/net-session.js',
-    'assets/level.js',
+    'assets/level.js', 'assets/boot.js',
     'index.html',
 ];
 
@@ -95,9 +95,10 @@ function collectNames() {
         if (!existsSync(full)) { console.error('[probe] 缺文件 ' + f); process.exit(1); }
         let code = readFileSync(full, 'utf8');
         if (f.endsWith('.html')) {
+            // 启动脚本已经搬到 assets/boot.js；万一以后又写了内联脚本，这里也认
             const i0 = code.indexOf('<script>');
-            const i1 = code.indexOf('</script>', i0);
-            code = code.slice(i0 + 8, i1);
+            const i1 = i0 < 0 ? -1 : code.indexOf('</script>', i0);
+            code = (i0 < 0 || i1 < 0) ? '' : code.slice(i0 + 8, i1);
         }
         for (const n of topLevelNames(code)) set.add(n);
     }
