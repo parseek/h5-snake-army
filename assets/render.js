@@ -687,6 +687,11 @@ function syncBuildBtn() {
     const dual = dualLocal();
     const mine = mySeatIndex();
 
+    // 手机端两套皮肤：本地双人（两个方向盘并排、按钮缩小一点）和观战
+    // （没有可操作的蛇，方向键/建塔/暂停在 CSS 里收起来）
+    document.body.classList.toggle('dualmode', dual);
+    document.body.classList.toggle('spectating', netSpectating());
+
     for (let i = 0; i < buildBtnEls.length; i++) {
         // 本地双人：按钮 i 就是玩家 i，两个都摆出来。
         // 其它情况（单人 / 联机主机 / 联机客机）只留一个按钮，而且它必须显示

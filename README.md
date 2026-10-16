@@ -328,11 +328,42 @@ scripts/smoke.mjs           安全地起一个隔离的无头浏览器
 scripts/shot.mjs            用 CDP 量尺寸 / 跑一段 JS / 截图（--size、--mobile 手机模拟）
 scripts/probe-web.mjs       端到端探针（npm run probe）
 scripts/pack-netlify.mjs    打线上发布包 release/netlify/（npm run pack:netlify）
+scripts/publish.mjs         一键发布：探针 -> 提交 -> 推两个远端 -> 构建（publish.bat 的实体）
+publish.bat                 上面那个脚本的批处理入口（纯 ASCII，双击也能用）
 scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/
 scripts/fetch-easytier.mjs  下载 EasyTier
 ```
 
 ## 发布
+
+### 一键发布（推荐）
+
+```bash
+publish.bat -m "提交说明"
+```
+
+按顺序做四件事，任何一步硬失败就停下：
+
+1. **探针当闸门**：先跑 `npm run probe`，不过就不提交（浏览器不可用时加 `--skip-probe`）
+2. **提交**：`git add -A` + `git commit`（不带 `-m` 且是双击运行时会问你要说明）
+3. **推送**：`origin`（Gitee）+ `github`；某个远端失败只警告，不让后面的步骤停下
+4. **构建**：先看 `src-tauri/binaries/` 里有没有 EasyTier，缺了就 `fetch:easytier`；
+   如果检测到 `snake-army.exe` 正在运行（它会锁住编译产物，直接编会报
+   `拒绝访问 (os error 5)`），会问你要不要关掉它（也可以加 `--kill`）；
+   最后 `build:exe` + `pack:release`
+
+```bash
+publish.bat -m "..." --skip-probe    跳过探针
+publish.bat -m "..." --no-build      只提交推送，不构建
+publish.bat --dry-run                只把计划打出来，什么都不改
+```
+
+> 逻辑在 `scripts/publish.mjs`，`publish.bat` 只包一层。为什么不全写在 .bat 里：
+> cmd 是按**控制台代码页**读批处理文件的，里面写 UTF-8 中文会被读乱、甚至把语法拆坏
+> （这个坑踩过，那版 .bat 直接跑不起来）。所以 .bat 保持纯 ASCII，中文提示都在 Node 里。
+> 它只按进程名关 `snake-army.exe`（我们自己的桌面版）这一个程序，其它一律不碰。
+
+### 手动发布
 
 ### 出一个「完整可运行」的包
 

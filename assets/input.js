@@ -38,6 +38,13 @@ function localBuild() {
     if (players && players[0]) players[0].buildRequested = true;
 }
 
+// 触摸反馈：能震就轻轻震一下（iOS 的 Safari 不支持 vibrate，忽略即可）
+function tapFeedback() {
+    try {
+        if (navigator.vibrate) navigator.vibrate(8);
+    } catch (e) { /* 不支持就算了 */ }
+}
+
 function onKeyDown(ev) {
     const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
 
@@ -134,6 +141,7 @@ Array.prototype.forEach.call(
     document.querySelectorAll('.operate .btn[data-dir]'),
     function (btn) {
         btn.addEventListener('click', function () {
+            tapFeedback();
             // 客机点屏幕方向键也要发给主机，不然本地是空操作
             localTurn(btn.getAttribute('data-dir'));
         });
@@ -146,6 +154,7 @@ Array.prototype.forEach.call(
     document.querySelectorAll('.operate .btn[data-dir2]'),
     function (btn) {
         btn.addEventListener('click', function () {
+            tapFeedback();
             if (!dualLocal() || !players || !players[1]) return;
             turn(players[1], btn.getAttribute('data-dir2'));
         });
@@ -155,6 +164,7 @@ Array.prototype.forEach.call(
 for (let i = 0; i < buildBtnEls.length; i++) {
     (function (idx) {
         buildBtnEls[idx].addEventListener('click', function () {
+            tapFeedback();
             if (dualLocal()) {
                 if (players[idx]) players[idx].buildRequested = true;
             } else {
@@ -166,10 +176,11 @@ for (let i = 0; i < buildBtnEls.length; i++) {
 }
 
 // 房间里也能点开设置 / 聊天（手机上主要靠这两个按钮）
-document.getElementById('cfgBtn').addEventListener('click', function () { toggleCfgPanel(); });
-document.getElementById('chatBtn').addEventListener('click', function () { toggleChat(); });
+document.getElementById('cfgBtn').addEventListener('click', function () { tapFeedback(); toggleCfgPanel(); });
+document.getElementById('chatBtn').addEventListener('click', function () { tapFeedback(); toggleChat(); });
 
 pauseBtnEl.addEventListener('click', function () {
+    tapFeedback();
     if (netRole === 'guest') netAskHost('pause');
     else togglePause();
 });

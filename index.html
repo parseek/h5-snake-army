@@ -515,6 +515,19 @@
             display: none;
         }
 
+        /* 观战席没有可操作的蛇：方向键、建塔、暂停都收起来（设置和聊天留着） */
+        body.spectating .operate .btn[data-dir],
+        body.spectating .operate .btn[data-dir2],
+        body.spectating .operate .btn.build,
+        body.spectating .operate .btn.pause {
+            display: none;
+        }
+
+        /* 十字的坑：把方向键藏了，那三行 grid 还占着地方，得让它塌回去 */
+        body.spectating .operate {
+            grid-template-rows: auto;
+        }
+
         .operate .btn:active {
             background-color: saddlebrown;
             color: #fff;
@@ -626,33 +639,91 @@
                 font-size: 13px;
             }
 
-            /* 操作区按拇指来放大：方向键 66px，整行的功能键 48px 高 */
+            /* 操作区改成真正好按的样子：
+                  * 方向键摆成十字（DOM 顺序不动，靠属性选择器定位）
+                  * 暂停放到十字中心 —— 拇指不用离开方向区
+                  * 建塔 / 设置·聊天 各占一整行
+               总高度和以前一样，所以「棋盘 + 操作区」仍然一屏放得下。 */
             .pads {
                 display: flex;
-                gap: 10px;
+                gap: 8px;
                 justify-content: center;
                 flex-wrap: wrap;
             }
 
             .operate {
-                width: 210px;
+                display: grid;
+                grid-template-columns: repeat(3, 64px);
+                grid-template-rows: repeat(3, 64px);
                 gap: 6px;
+                width: auto;
+                justify-content: center;
             }
 
             .operate .btn {
-                width: 66px;
-                height: 66px;
-                font-size: 20px;
-                border-radius: 10px;
+                width: 64px;
+                height: 64px;
+                font-size: 22px;
+                border-radius: 12px;
                 touch-action: manipulation;   /* 去掉双击缩放那 ~300ms 的等待 */
+                transition: background-color .06s linear, color .06s linear;
             }
 
-            .operate .btn.flex {
-                /* 必须把 width 写回来：上面 .operate .btn 的 66px 写在媒体查询里、
-                   位置比 .operate .flex { width: 100% } 更靠后，会把整行按钮压成 66px */
-                width: 100%;
+            /* 十字：上 1/2、左 2/1、右 2/3、下 3/2，中心 2/2 给暂停 */
+            .operate .btn[data-dir="up"], .operate .btn[data-dir2="up"] { grid-area: 1 / 2; }
+            .operate .btn[data-dir="left"], .operate .btn[data-dir2="left"] { grid-area: 2 / 1; }
+            .operate .btn[data-dir="right"], .operate .btn[data-dir2="right"] { grid-area: 2 / 3; }
+            .operate .btn[data-dir="down"], .operate .btn[data-dir2="down"] { grid-area: 3 / 2; }
+            .operate .btn.pause { grid-area: 2 / 2; width: 64px; height: 64px; font-size: 13px; }
+
+            /* 整行的按钮：grid 里要给 width: auto 才会撑满那一行。
+               注意别把 .btn.flex 写进来 —— 「上」和「暂停」都带着这个类
+               （老 flex 布局留下的），一写就把它们打成整行，十字就塌了。 */
+            .operate .btn.build,
+            .operate .duo,
+            .operate .duo .btn {
+                width: auto;
+                grid-column: 1 / -1;
+            }
+
+            .operate .btn.build {
                 height: 48px;
-                font-size: 14px;
+                font-size: 13px;
+            }
+
+            .operate .duo {
+                display: flex;
+                gap: 6px;
+            }
+
+            .operate .duo .btn {
+                flex: 1;
+                height: 48px;
+                font-size: 15px;
+            }
+
+            /* 本地双人：两个人一人一半，两个盘并排才放得下（56px 刚好 374 宽） */
+            body.dualmode .pads {
+                gap: 6px;
+            }
+
+            body.dualmode .operate {
+                grid-template-columns: repeat(3, 56px);
+                grid-template-rows: repeat(3, 56px);
+                gap: 4px;
+            }
+
+            body.dualmode .operate .btn[data-dir],
+            body.dualmode .operate .btn[data-dir2],
+            body.dualmode .operate .btn.pause {
+                width: 56px;
+                height: 56px;
+                font-size: 19px;
+                border-radius: 10px;
+            }
+
+            body.dualmode .operate .btn.pause {
+                font-size: 12px;
             }
 
             /* 开局后把长篇帮助收起来，让「棋盘 + 操作区」塞得进一屏 */
