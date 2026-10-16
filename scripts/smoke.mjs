@@ -68,7 +68,7 @@ const flags = [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     '--disable-extensions', '--hide-scrollbars',
     '--user-data-dir=' + profile,
-    '--window-size=900,1150',
+    '--window-size=' + opt('--size', '900,1150'),
 ];
 const child = spawn(EDGE, flags.concat([base + '/' + page]), { stdio: 'ignore', detached: false });
 console.log('[smoke] 起了一个隔离的无头浏览器 (profile=' + profile + ')');

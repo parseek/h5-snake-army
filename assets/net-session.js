@@ -872,18 +872,27 @@ function lanRenderRooms(rows, listEl, noteEl) {
         // 玩家席还有空位就能进；满了还能当观战进去
         const freeSeats = (typeof r.freeSeats === 'number') ? r.freeSeats : (r.taken ? 0 : 1);
         const freeSpec = r.freeSpectatorSeats || 0;
+        // 第一行只放「谁家的房间、几个人」—— 这一行是 nowrap + 省略号，
+        // 塞太多东西就会被截断
         const t1 = document.createElement('span');
         t1.textContent = r.name + '　·　' + (r.player || row.host || '?') +
-            '　·　' + (r.players || 1) + '/' + (r.maxPlayers || 2) + ' 人' +
-            (r.spectators ? '（观战 ' + r.spectators + '）' : '') +
-            '　·　' + (r.cols || '?') + '×' + (r.rows || '?') +
-            (freeSeats ? '　空 ' + freeSeats + ' 位' : '　玩家席已满（可观战）');
+            '　·　' + (r.players || 1) + '/' + (r.maxPlayers || 2) + ' 人';
         info.appendChild(t1);
+
+        // 第二行放场地和座位情况（可以换行，不会被截）
+        const t2 = document.createElement('span');
+        t2.className = 'sub2';
+        t2.textContent = (r.cols || '?') + '×' + (r.rows || '?') +
+            (freeSeats ? '　空 ' + freeSeats + ' 个玩家席' : '　玩家席已满') +
+            (freeSpec ? '　观战席空 ' + freeSpec + ' 个' : '') +
+            (r.spectators ? '　已有 ' + r.spectators + ' 人观战' : '');
+        info.appendChild(t2);
+
         if (r.desc) {
-            const t2 = document.createElement('span');
-            t2.className = 'sub2';
-            t2.textContent = r.desc;
-            info.appendChild(t2);
+            const t3 = document.createElement('span');
+            t3.className = 'sub2';
+            t3.textContent = r.desc;
+            info.appendChild(t3);
         }
 
         const btn = document.createElement('button');

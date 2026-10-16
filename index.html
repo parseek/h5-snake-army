@@ -136,10 +136,23 @@
             gap: 10px;
             padding: 22px 16px;
             overflow-y: auto;
+            /* 只滚纵向。横向一旦溢出，这个 fixed 浮层会在窗口底部画一条横向滚动条 */
+            overflow-x: hidden;
             background: rgba(0, 0, 0, 0.72);
             color: #fff;
             line-height: 1.4;
             font-size: 14px;
+        }
+
+        /* 面板内容限宽。
+           以前 .netIce / textarea 写的是 width: 88% —— 那是相对「贴满视口的浮层」算的，
+           窗口一拉宽（Tauri 全屏、超宽显示器）输入框就跟着横着铺满，
+           房间设置那一行的四个输入框直接把窗口撑出横向滚动条。 */
+        .start > *:not(.startBtn) {
+            /* 只限上限、不写 width:100%：短的标题/提示保持原来的居中观感，
+               长内容（开房表单、房间列表）也不会横着铺满整个窗口 */
+            max-width: 560px;
+            box-sizing: border-box;
         }
 
         /* 开始面板里的链接（在线版地址）：默认的蓝色在深底上几乎看不清 */
@@ -153,6 +166,22 @@
         .start::after {
             content: '';
             margin: auto;
+        }
+
+        /* 联机面板内容比主菜单长得多，半透明背景会透出后面的帮助文字，看着很乱 */
+        #netPanel {
+            background: rgba(0, 0, 0, 0.86);
+        }
+
+        /* 小输入框的固定标签（场地宽 / 场地高 / 人数上限 / 端口） */
+        .start .field {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px;
+            opacity: 0.85;
+            line-height: 1;
         }
 
         .start .lanBox {
@@ -185,8 +214,11 @@
             border-radius: 6px;
         }
 
-        .start .portInput {
-            width: 104px;
+        /* 必须写成两个类：只写 .start .portInput 时，权重跟后面的
+           .start .netIce { width: 88% } 一样，后写的赢 —— 于是「场地宽」变成了 88% 宽。
+           多一个类名把权重提上去，跟顺序无关。 */
+        .start .netIce.portInput {
+            width: 108px;
             flex: none;
         }
 
@@ -287,6 +319,14 @@
             display: none;
         }
 
+        .start .title,
+        .start .sub,
+        .start .tip {
+            /* 限宽之后长文本的盒子会撑到 560，文字得自己居中，
+               否则「短提示居中、长提示左对齐」看着像没对齐 */
+            text-align: center;
+        }
+
         .start .title {
             font-size: 26px;
             font-weight: 700;
@@ -319,9 +359,12 @@
         }
 
         .startBtn.small {
-            width: 74px;
-            padding: 6px 0;
+            /* 以前是死宽 74px，「搜索附近房间」这种长一点的标签会被挤成两行 */
+            width: auto;
+            min-width: 74px;
+            padding: 6px 12px;
             font-size: 13px;
+            white-space: nowrap;
         }
 
         .startBtn:disabled {
@@ -338,6 +381,9 @@
             display: flex;
             gap: 8px;
             line-height: 1;
+            /* 限宽后行是满宽的，得自己居中；窄窗口（手机）下允许换行 */
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         .start .netIce {
@@ -543,13 +589,19 @@
                     <input id="myName" class="netIce" spellcheck="false" placeholder="你的玩家名（对方看到的名字）" />
                     <input id="roomName" class="netIce" spellcheck="false" placeholder="房间名" />
                     <input id="roomDesc" class="netIce" spellcheck="false" placeholder="房间描述（给对方看，可留空）" />
+                    <!-- 场地 / 人数 / 端口：以前只靠 placeholder 说明，值一填上就只剩
+                         一串数字，认不出哪个是哪个。改成固定小标签。 -->
                     <div class="row">
-                        <input id="roomCols" class="netIce portInput" spellcheck="false" placeholder="场地宽" />
-                        <input id="roomRows" class="netIce portInput" spellcheck="false" placeholder="场地高" />
-                        <input id="roomMax" class="netIce portInput" spellcheck="false" placeholder="人数上限 2-6" />
-                        <input id="roomPort" class="netIce portInput" spellcheck="false" placeholder="端口" />
-                        <button class="startBtn small" id="lanHostBtn">开个房间</button>
+                        <label class="field"><span>场地宽</span>
+                            <input id="roomCols" class="netIce portInput" spellcheck="false" /></label>
+                        <label class="field"><span>场地高</span>
+                            <input id="roomRows" class="netIce portInput" spellcheck="false" /></label>
+                        <label class="field"><span>人数上限</span>
+                            <input id="roomMax" class="netIce portInput" spellcheck="false" /></label>
+                        <label class="field"><span>端口</span>
+                            <input id="roomPort" class="netIce portInput" spellcheck="false" /></label>
                     </div>
+                    <button class="startBtn" id="lanHostBtn">开个房间</button>
                     <div class="tip" id="lanMsg">同一个 Wi-Fi 下可以直接互相搜到</div>
                     <div class="row" id="lanScanRow">
                         <button class="startBtn small" id="lanScanBtn">搜索附近房间</button>
