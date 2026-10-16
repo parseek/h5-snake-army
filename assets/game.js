@@ -164,7 +164,9 @@ function appleTargetCount(now) {
     const base = Math.max(0, Math.round(levelCfg.appleBase));
     const byTime = base + Math.floor(Math.max(0, now - runStartAt) / (APPLE_RAMP_SEC * 1000));
     const byScore = base + Math.floor(topScore() / APPLE_RAMP_SCORE);
-    return Math.min(Math.max(byTime, byScore), levelCfg.apples);
+    const want = Math.max(byTime, byScore);
+    const cap = Math.round(levelCfg.apples);
+    return cap > 0 ? Math.min(want, cap) : want;      // 上限 0 = 无上限（随时间一直涨）
 }
 
 // 离某点最近的苹果（敌人 AI 用）
@@ -466,6 +468,7 @@ function syncPlayingClass() {
 }
 
 function start(m, tm, arena) {
+    sfxStart();
     if (MODES[m]) mode = m;
     if (TEAM_MODES[tm]) teamMode = tm;
     levelCfg.team = teamMode;      // 面板上显示的、以及发给客机的，都是这一份
@@ -548,6 +551,8 @@ function pickPowerUp(p, kind, now) {
     // 这种道具自己的间隔 × 总倍率
     powerRespawnAt[kind] = now + powerGapMs(kind);
 
+    sfxPowerUp(kind);
+
     if (kind === 'speed') {
         // 步长乘以 SPEED_FACTOR，并从现在起持续关卡设定的 boostMs
         setStepMs(p, levelCfg.stepMs * SPEED_FACTOR);
@@ -591,6 +596,7 @@ function crashPlayer(p, cut, now) {
     p.hp.splice(0, cut);       // 血条跟着对齐
     const inv = Math.max(0, Math.round(levelCfg.invMs) || 0);
     if (inv > 0) p.invUntil = now + inv;
+    sfxCut();                  // 「切断」声
     syncHud();
     return false;
 }
@@ -650,6 +656,7 @@ function step(p, now) {
     }
 
     p.body.unshift(head);
+    sfxStep(p.stepMs);                 // 走一步一声（很轻，带节流）
     if (willGrow) {
         // 变长时给尾巴补一格血。血量按「从蛇头数第几节」对齐，
         // 所以蛇往前走时，受伤的那一节会跟着身体一起前进
@@ -662,11 +669,13 @@ function step(p, now) {
         apples.splice(eatIdx, 1);
         p.score += 1;
         spawnApple();   // 吃掉一个补一个
+        sfxEat(p.score); // 音高随分数往上走，连着吃不会腻
         syncHud();
     }
 
     if (dropIdx !== -1) {
         drops.splice(dropIdx, 1);
+        sfxCoin(dropKind !== 'coin');      // 金币亮一点，加身长的掉落低一档
         if (dropKind === 'coin') {
             p.coins += 1;
             syncHud();
@@ -697,13 +706,24 @@ function playerAt(x, y, except) {
 }
 
 // 某位玩家出局：留一具同色的消散尸体；两位都出局才结算
+// 上一帧实际画到的探出比例：没有就退回 1（整格，最接近「撞进去」的观感）
+function lastDrawnE(o) {
+    return (typeof o.drawnE === 'number' && isFinite(o.drawnE)) ? o.drawnE : 1;
+}
+
 function killPlayer(p, now) {
     if (!p.alive) return;
+    // 死亡这一步之前，帧循环已经把 acc 归零了（acc -= stepMs 在 step() 之前），
+    // 所以此刻的 progress() 其实是 0 —— 必须用「上一帧真正画到哪」(drawnE)，
+    // 否则蛇头会从 0.9 格的位置一下跳回整格。
+    const deathE = lastDrawnE(p);
     p.alive = false;
+    sfxDie();
     p.acc = p.stepMs;      // 停在冲到终点的那一帧，避免蛇头弹回
     corpses.push({
         body: p.body, hp: p.hp, dir: p.dir,
         diedAt: now,
+        e: deathE,
         loot: false,       // 玩家的尸体不掉战利品
         bodyColor: p.def.body,
         headColor: p.def.head
@@ -807,6 +827,7 @@ function revivePartner(p, now) {
         q.boostUntil = 0;
         q.spawnAt = now;
         q.alive = true;
+        sfxRevive();
         return true;
     }
     return false;
@@ -814,6 +835,7 @@ function revivePartner(p, now) {
 
 function gameOver() {
     state = 'over';
+    sfxOver();
     for (let i = 0; i < players.length; i++) {
         const p = players[i];
         p.acc = p.stepMs;   // 停在冲到终点的那一帧，避免蛇头弹回
@@ -877,8 +899,28 @@ const STEP_DIRS = [
 
 // 给某条敌人算一张障碍图：玩家、炮塔、其他敌人整条都算，
 // 它自己只有尾巴不算（下一步尾巴会让开）
+// BFS 用的缓冲区：每帧要跑十几次，绝不能每次都 new 一个 COLS×ROWS 的数组
+let aiBlockBuf = null;
+let aiDistBuf = null;
+let aiStampBuf = null;
+let aiQueueBuf = null;
+let aiStamp = 0;
+
+function aiBufs() {
+    const n = COLS * ROWS;
+    if (!aiBlockBuf || aiBlockBuf.length !== n) {
+        aiBlockBuf = new Uint8Array(n);
+        aiDistBuf = new Int32Array(n);
+        aiStampBuf = new Int32Array(n);
+        aiQueueBuf = new Int32Array(n);
+        aiStamp = 0;
+    }
+}
+
 function buildBlockMap(self) {
-    const blocked = new Uint8Array(COLS * ROWS);
+    aiBufs();
+    const blocked = aiBlockBuf;
+    blocked.fill(0);          // 复用一块，清空比新建快得多
 
     for (let i = 0; i < players.length; i++) {
         const b = players[i].body;
@@ -899,6 +941,47 @@ function buildBlockMap(self) {
 }
 
 // 敌人的走法：能靠近目标就靠近，但绝不把自己关进死胡同
+// 这个格子有多危险：玩家的子弹如果就在附近、而且正朝它飞，就扣分（敌人会躲子弹）。
+// 只在 3.2 格内算，远了不算 —— 不然整张图都是「危险区」，反而不会动了。
+function enemyBulletRisk(x, y) {
+    let risk = 0;
+    for (let i = 0; i < bullets.length; i++) {
+        const b = bullets[i];
+        if (b.from === 'enemy') continue;
+        const dx = (x + 0.5) - b.x;
+        const dy = (y + 0.5) - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 3.2) continue;
+        if (b.vx * dx + b.vy * dy <= 0) continue;      // 已经飞过去了 / 背对着
+        risk += (3.2 - d);
+    }
+    return risk;
+}
+
+// 最近的加速道具：敌人会主动去吃（已经加速中就不值得绕路，先去抢苹果）
+function nearestSpeedItem(from) {
+    if (levelCfg.powerups === false || levelCfg.i_speed_on === false) return null;
+    const list = powerList('speed');
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < list.length; i++) {
+        const d = Math.abs(list[i].x - from.x) + Math.abs(list[i].y - from.y);
+        if (d < bestD) { bestD = d; best = list[i]; }
+    }
+    return best ? { x: best.x, y: best.y, d: bestD } : null;
+}
+
+// 附近挤了几条同伴（除了自己）
+function enemyCrowd(x, y, self) {
+    let n = 0;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (e === self || !e.body[0]) continue;
+        if (Math.abs(e.body[0].x - x) + Math.abs(e.body[0].y - y) <= 2) n++;
+    }
+    return n;
+}
+
 function enemyChooseDir(self) {
     const blocked = buildBlockMap(self);
     const free = function (x, y) {
@@ -906,26 +989,31 @@ function enemyChooseDir(self) {
     };
 
     // 从某一格出发能走到的空地数量，用来判断会不会把自己憋死
-    function freeSpace(sx, sy) {
+    // 从某一格出发能走到的空地数量（最多数到 cap 就收工 —— 调用方只需要比较大小）。
+    // 复用缓冲 + 早退：原来每次都新建 30k 的数组并跑满整张图，大地图上很贵。
+    function freeSpace(sx, sy, cap) {
         if (!free(sx, sy)) return 0;
-        const seen = new Uint8Array(COLS * ROWS);
+        aiBufs();
+        aiStamp++;
         const start = sy * COLS + sx;
-        seen[start] = 1;
-        const queue = [start];
+        aiStampBuf[start] = aiStamp;
+        aiQueueBuf[0] = start;
+        let qHead = 0;
+        let qTail = 1;
         let count = 0;
-        for (let qi = 0; qi < queue.length; qi++) {
-            const cur = queue[qi];
+        while (qHead < qTail && count < cap) {
+            const cur = aiQueueBuf[qHead++];
             count += 1;
             const cx = cur % COLS;
-            const cy = Math.floor(cur / COLS);
+            const cy = (cur / COLS) | 0;
             for (let k = 0; k < STEP_DIRS.length; k++) {
                 const nx = cx + STEP_DIRS[k].x;
                 const ny = cy + STEP_DIRS[k].y;
-                if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+                if (!free(nx, ny)) continue;
                 const ni = ny * COLS + nx;
-                if (seen[ni] || !free(nx, ny)) continue;
-                seen[ni] = 1;
-                queue.push(ni);
+                if (aiStampBuf[ni] === aiStamp) continue;
+                aiStampBuf[ni] = aiStamp;
+                aiQueueBuf[qTail++] = ni;
             }
         }
         return count;
@@ -945,56 +1033,75 @@ function enemyChooseDir(self) {
 
     if (options.length === 0) return self.dir;   // 走投无路
 
-    // 目标：默认抢苹果；也可以改成堵玩家下一步要走的格子
-    const target = (ENEMY_TARGET === 'player')
+    // 目标：默认抢苹果；也可以改成堵玩家下一步要走的格子。
+    // 但如果附近正好有加速道具、自己又还没加速，就先去吃它 ——
+    // 加速之后抢苹果、追人都快，绕几格很划算（以前是「顺路才捡」）。
+    let target = (ENEMY_TARGET === 'player')
         ? nearestPlayerNext(head)
         : nearestApple(head);
+    const item = nearestSpeedItem(head);
+    if (item && !boosted(self) && (item.d <= 6 || !target)) {
+        target = { x: item.x, y: item.y };
+    }
 
     if (target) {
         // 从目标点反推距离，每条蛇各搜一次
-        const dist = new Array(COLS * ROWS).fill(-1);
+        aiBufs();
+        aiStamp++;
         const start = target.y * COLS + target.x;
-        dist[start] = 0;
-        const queue = [start];
-        for (let qi = 0; qi < queue.length; qi++) {
-            const cur = queue[qi];
+        aiStampBuf[start] = aiStamp;
+        aiDistBuf[start] = 0;
+        aiQueueBuf[0] = start;
+        let qHead = 0;
+        let qTail = 1;
+        while (qHead < qTail) {
+            const cur = aiQueueBuf[qHead++];
             const cx = cur % COLS;
-            const cy = Math.floor(cur / COLS);
+            const cy = (cur / COLS) | 0;
+            const nd = aiDistBuf[cur] + 1;
             for (let k = 0; k < STEP_DIRS.length; k++) {
                 const nx = cx + STEP_DIRS[k].x;
                 const ny = cy + STEP_DIRS[k].y;
                 if (!free(nx, ny)) continue;
                 const ni = ny * COLS + nx;
-                if (dist[ni] !== -1) continue;
-                dist[ni] = dist[cur] + 1;
-                queue.push(ni);
+                if (aiStampBuf[ni] === aiStamp) continue;
+                aiStampBuf[ni] = aiStamp;
+                aiDistBuf[ni] = nd;
+                aiQueueBuf[qTail++] = ni;
             }
         }
 
         let best = null;
-        let bestD = Infinity;
+        let bestScore = Infinity;
         for (let i = 0; i < options.length; i++) {
-            const d = dist[options[i].y * COLS + options[i].x];
-            if (d === -1) continue;
-            if (d < bestD) {
-                bestD = d;
-                best = options[i];
+            const o = options[i];
+            const oi = o.y * COLS + o.x;
+            if (aiStampBuf[oi] !== aiStamp) continue;      // 这次搜索没走到它
+            const d = aiDistBuf[oi];
+            // 在「离目标多远」之外再扣两项：
+            //   子弹飞过的地方（会躲玩家的子弹）
+            //   同伴扎堆的地方（几条蛇挤一起会互相撞死）
+            const score = d + enemyBulletRisk(o.x, o.y) * 6 + enemyCrowd(o.x, o.y, self) * 2;
+            if (score < bestScore) {
+                bestScore = score;
+                best = o;
             }
         }
         // 走这一步之后还得有足够空地，不然就是自寻死路
-        if (best && freeSpace(best.x, best.y) >= self.body.length) {
+        if (best && freeSpace(best.x, best.y, self.body.length) >= self.body.length) {
             return best.dir;
         }
     }
 
     // 够不到目标，就往空地最大的一边逃
     let fallback = options[0];
-    let bestSpace = -1;
+    let bestScore = -Infinity;
     for (let i = 0; i < options.length; i++) {
-        const space = freeSpace(options[i].x, options[i].y);
-        if (space > bestSpace) {
-            bestSpace = space;
-            fallback = options[i];
+        const o = options[i];
+        const score = freeSpace(o.x, o.y, 240) - enemyBulletRisk(o.x, o.y) * 8 - enemyCrowd(o.x, o.y, self) * 2;
+        if (score > bestScore) {
+            bestScore = score;
+            fallback = o;
         }
     }
     return fallback.dir;
@@ -1105,19 +1212,27 @@ function spawnEnemy(now) {
 function fireEnemyBullet(en) {
     const from = en.body[0];
 
-    // 挑最近的活着的玩家打
+    // 挑最近的活着的玩家打，并且瞄他「下一步要进的格子」——
+    // 子弹直接打当前位置的话，500ms 一步的玩家经常刚好走开
     let target = null;
     let bestD = Infinity;
     for (let i = 0; i < players.length; i++) {
         const q = players[i];
         if (!q.alive) continue;
         const dd = Math.abs(q.body[0].x - from.x) + Math.abs(q.body[0].y - from.y);
-        if (dd < bestD) { bestD = dd; target = q.body[0]; }
+        if (dd < bestD) { bestD = dd; target = q; }
     }
     if (!target) return;
 
-    const dx = target.x - from.x;
-    const dy = target.y - from.y;
+    const head = target.body[0];
+    const nextX = head.x + target.dir.x;
+    const nextY = head.y + target.dir.y;
+    const aim = (nextX < 0 || nextY < 0 || nextX >= COLS || nextY >= ROWS)
+        ? { x: head.x, y: head.y }
+        : { x: nextX, y: nextY };
+
+    const dx = aim.x - from.x;
+    const dy = aim.y - from.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 0.0001 || d > ENEMY_SHOOT_RANGE) return;
 
@@ -1134,14 +1249,18 @@ function killEnemy(target, now) {
     const i = enemies.indexOf(target);
     if (i === -1) return;
     enemies.splice(i, 1);
+    sfxKill();
     enemyRespawns.push(now + levelCfg.enemyGap);
 
-    // 不立刻消失：留一具会缩小淡出的尸体，动画放完才爆成战利品
+    // 不立刻消失：留一具会缩小淡出的尸体，动画放完才爆成战利品。
+    // e 同上：接着「上一帧画到哪」画，不然敌人蛇头也会跳一格。
+    const deathE = lastDrawnE(target);
     corpses.push({
         body: target.body,
         hp: target.hp,
         dir: target.dir,
         diedAt: now,
+        e: deathE,
         loot: true,
         bodyColor: enemyDef(target).body,
         headColor: enemyDef(target).head
@@ -1277,6 +1396,7 @@ function buildTurret(p) {
     p.coins -= levelCfg.turretCoins;
     syncHud();
     turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0, owner: p, upA: 0, upB: 0 });
+    sfxBuild();
     return true;
 }
 
@@ -1346,6 +1466,7 @@ function upgradeTurret(p, path) {
     p.coins -= upgradeCost(t, path);
     if (path === 'B') t.upB = (t.upB || 0) + 1;
     else t.upA = (t.upA || 0) + 1;
+    sfxUpgrade();
     syncHud();
     return true;
 }
@@ -1400,6 +1521,7 @@ function updateTurrets(now) {
         if (!target || target.d < 0.0001) continue;
 
         t.cooldownUntil = now + TURRET_COOLDOWN;
+        sfxShoot();
         const sp = turretBulletSpeed(t);
         bullets.push({
             from: 'player',
@@ -1477,6 +1599,7 @@ function updateBullets(dtSec, now) {
             }
             if (hitEnemy) {
                 bullets.splice(i, 1);
+                sfxHit();
                 if (damageBody(hitEnemy.body, hitEnemy.hp, hitIdx, now, b.dmg || 1)) killEnemy(hitEnemy, now);
                 continue;
             }
@@ -1489,6 +1612,7 @@ function updateBullets(dtSec, now) {
                     const pIdx = bodyIndexAt(q.body, cx, cy);
                     if (pIdx === -1) continue;
                     bullets.splice(i, 1);
+                    sfxHit();
                     if (damageBody(q.body, q.hp, pIdx, now, b.dmg || 1)) killPlayer(q, now);
                     break;
                 }

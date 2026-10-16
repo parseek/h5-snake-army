@@ -30,6 +30,7 @@ function localTurn(dirName) {
 }
 
 function localBuild() {
+    if (netRole === 'guest' && typeof sfxBuild === 'function') sfxBuild();   // 本地先响一声
     if (state !== 'running') return;
     if (netRole === 'guest') {
         if (!netSpectating()) netSend({ t: 'build' });
@@ -40,6 +41,8 @@ function localBuild() {
 
 // 触摸反馈：能震就轻轻震一下（iOS 的 Safari 不支持 vibrate，忽略即可）
 function tapFeedback() {
+    // 第一次交互时把 AudioContext 唤醒（浏览器要求在手势里才能出声）
+    if (typeof sfxResume === 'function') sfxResume();
     try {
         if (navigator.vibrate) navigator.vibrate(8);
     } catch (e) { /* 不支持就算了 */ }
@@ -47,6 +50,7 @@ function tapFeedback() {
 
 function onKeyDown(ev) {
     const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    if (typeof sfxResume === 'function') sfxResume();   // 键盘也算用户交互
 
     // 焦点在输入框 / 文本域里时，游戏快捷键一律让路 ——
     // 否则在聊天框里打 w、a、s、d、p 会顺手把蛇拐弯、把局暂停
@@ -60,9 +64,9 @@ function onKeyDown(ev) {
     // 面板上：1 / 2 直接选模式
     if (state === 'menu') {
         if (!netPanelEl.hidden) return;   // 联机面板上别误触数字键
-        if (key === '1') { ev.preventDefault(); start(1); }
-        else if (key === '2') { ev.preventDefault(); start(2, 'coop'); }
-        else if (key === '3') { ev.preventDefault(); start(2, 'vs'); }
+        if (key === '1') { ev.preventDefault(); startLocalGame(); }
+        // 2 = 开启房间：直接点那个按钮，行为和鼠标点它完全一样
+        else if (key === '2') { ev.preventDefault(); startBtnNetEl.click(); }
         return;
     }
 
@@ -179,6 +183,7 @@ for (let i = 0; i < buildBtnEls.length; i++) {
 function localUpgrade(path) {
     if (netRole === 'guest') {                 // 客机：让主机替自己升
         netSend({ t: 'upgrade', path: path });
+        if (typeof sfxUpgrade === 'function') sfxUpgrade();
         return;
     }
     if (state !== 'running' || !players || !players[0]) return;
@@ -213,9 +218,38 @@ pauseBtnEl.addEventListener('click', function () {
     else togglePause();
 });
 
-startBtnSingleEl.addEventListener('click', function () { start(1); });
-startBtnCoopEl.addEventListener('click', function () { start(2, 'coop'); });
-startBtnVsEl.addEventListener('click', function () { start(2, 'vs'); });
+// 「本地」：按当前设置开局（人数 1/2，双人时合作或竞争）
+function startLocalGame() {
+    if (localPlayerCount === 2) start(2, localTeam === 'vs' ? 'vs' : 'coop');
+    else start(1);
+}
+
+function syncStartSettings() {
+    if (startPlayersBtnEl) startPlayersBtnEl.textContent = '人数：' + localPlayerCount;
+    if (startTeamBtnEl) {
+        startTeamBtnEl.hidden = (localPlayerCount !== 2);
+        startTeamBtnEl.textContent = (localTeam === 'vs') ? '竞争' : '合作';
+        startTeamBtnEl.classList.toggle('is-on', localTeam === 'vs');
+    }
+}
+
+startBtnLocalEl.addEventListener('click', function () { tapFeedback(); startLocalGame(); });
+if (startPlayersBtnEl) {
+    startPlayersBtnEl.addEventListener('click', function () {
+        tapFeedback();
+        localPlayerCount = (localPlayerCount === 2) ? 1 : 2;
+        syncStartSettings();
+    });
+}
+if (startTeamBtnEl) {
+    startTeamBtnEl.addEventListener('click', function () {
+        tapFeedback();
+        localTeam = (localTeam === 'vs') ? 'coop' : 'vs';
+        syncStartSettings();
+    });
+}
+
+syncStartSettings();
 
 // 手机上结束后点棋盘即可重开
 canvas.addEventListener('click', function () {

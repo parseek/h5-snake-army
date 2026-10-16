@@ -574,6 +574,7 @@ function netApplyCuts(list) {
         const cells = [];
         for (let k = 0; k < c.c.length; k += 2) cells.push({ x: c.c[k], y: c.c[k + 1] });
         if (!cells.length) continue;
+        if (typeof sfxCut === 'function') sfxCut();     // 客机也听得到「切断」
         cutFx.push({
             id: ++cutFxSeq,
             cells: cells,
@@ -653,6 +654,7 @@ function netSnapshot() {
 function netApplySnapshot(m) {
     gameNow = m.now;
     nowRef = gameNow;
+    if (state !== 'over' && m.st === 'over' && typeof sfxOver === 'function') sfxOver();
     state = m.st;
     if (typeof m.you === 'number') netSeat = m.you;   // 主机告诉我坐哪儿（< 0 = 观战）
     mode = m.mode;

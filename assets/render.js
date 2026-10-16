@@ -445,7 +445,9 @@ function drawSnake(p) {
 
     const head = p.body[0];
     const s = spawnScale(p.spawnAt, nowRef);
-    const pts = buildPath(p.body, p.dir, progress(p), state === 'running' && !willGrowNext(p));
+    const eNow = progress(p);
+    p.drawnE = eNow;      // 记住这一帧蛇头探出到哪：死亡时尸体要从这里接着画
+    const pts = buildPath(p.body, p.dir, eNow, state === 'running' && !willGrowNext(p));
 
     withSpawnScale(cxOf(head), cyOf(head), s, function () {
         if (boosted(p)) drawBoostGlow(pts, p.def.body);
@@ -509,13 +511,22 @@ function drawCutFx() {
     }
 }
 
+// 尸体蛇头探出的比例：起点 = 死前最后一帧的位置，终点 = 1（整格撞进去），缓出
+function corpseEase(c, now) {
+    const from = (typeof c.e === 'number') ? c.e : 0;
+    const k = Math.max(0, Math.min(1, (now - c.diedAt) / CORPSE_EASE_MS));
+    return from + (1 - from) * easeOutCubic(k);
+}
+
 function drawCorpses() {
     for (let i = 0; i < corpses.length; i++) {
         const c = corpses[i];
         const t = Math.min(1, (nowRef - c.diedAt) / DEATH_ANIM_MS);
         if (t >= 1 || c.body.length === 0) continue;
 
-        const pts = buildPath(c.body, c.dir, 0, false);
+        // c.e = 死前最后一帧画到的位置；再用 easeOut 滑到「撞进去那一格」，
+        // 所以是「接上 + 缓出」，不是突变。
+        const pts = buildPath(c.body, c.dir, corpseEase(c, nowRef), true);
         strokeSnake(pts, c.body, c.hp, c.bodyColor, c.headColor, c.dir,
             1 - easeInCubic(t));
     }
@@ -527,6 +538,7 @@ function drawEnemy() {
         if (en.body.length === 0) continue;
 
         const e = ease(Math.max(0, Math.min(en.acc / en.stepMs, 1)));
+        en.drawnE = e;        // 同上：敌尸也要接着这一帧的位置画
         const head = en.body[0];
 
         // 下一步会变长（抢到苹果）的话，这一步尾巴不缩

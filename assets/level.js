@@ -19,7 +19,7 @@ const LEVEL_FIELDS = [
 
     { sec: '场上刷什么' },
     { key: 'appleBase', label: '开局苹果', type: 'num', min: 1, max: 200, hint: '个（之后随时间涨）' },
-    { key: 'apples', label: '苹果上限', type: 'num', min: 1, max: 200, unit: '个' },
+    { key: 'apples', label: '苹果上限', type: 'num', min: 0, max: 200, hint: '个（0 = 无上限）' },
     { key: 'enemies', label: '敌人', type: 'bool' },
     { key: 'enemyMax', label: '敌人上限', type: 'num', min: 1, max: 12, unit: '条' },
     { key: 'enemyGap', label: '敌人补位', type: 'num', min: 500, max: 60000, step: 500, hint: '毫秒' },
@@ -132,6 +132,7 @@ function buildLevelPage() {
     body.innerHTML = out.join('');
     wireLevelPage();
     buildPresetBar();
+    buildStartPresets();
     buildCodeBar();
 }
 
@@ -216,6 +217,7 @@ function syncCfgPanel() {
 function setCfg(patch) {
     if (netRole === 'guest') return;             // 客机没有修改权
     let restart = false;
+    startPresetId = '';          // 手动改过任何一项 -> 开始页的选中态回到「自定义」
     for (const k in patch) {
         const v = patch[k];
         if (v === undefined || (typeof v === 'number' && !isFinite(v))) continue;
@@ -312,8 +314,8 @@ const LEVEL_PRESETS = [
       cfg: { cols: 200, rows: 150, stepMs: 100, enemySpeed: 500, enemyGap: 3000, apples: 12, enemyMax: 12, turretMax: 12,
         // 道具量：总倍率 25%（默认的 4 倍频）+ 每种同屏 4 个（原来是各 1 个）
         powerGap: 25, i_speed_max: 4, i_widen_max: 4,
-        // 苹果：原来的 12 个 → 10 倍（开局就摆 120 个，上限也是 120）
-        appleBase: 120, apples: 120 } },
+        // 苹果：开局就摆 120 个，而且不设上限（随时间一直涨，直到场地塞满）
+        appleBase: 120, apples: 0 } },
     { id: 'blitz', name: '闪电战', note: '180ms 一步、1 血，撞一下就出局',
       cfg: { stepMs: 180, hp0: 1, apples: 4, enemyMax: 4, turretCost: 1 } }
 ];
@@ -368,6 +370,57 @@ function savedPresetIndex(name) {
         if (list[i].name === name) return i;
     }
     return -1;
+}
+
+// ------------------------------ 开始页的关卡按钮 ------------------------------
+// 点一下只是「选中这个关卡」（不会开局）；最后一个「🛠 自定义」打开编辑器。
+function buildStartPresets() {
+    const row = document.getElementById('startPresetRow');
+    if (!row) return;
+    row.innerHTML = '';
+
+    for (let i = 0; i < LEVEL_PRESETS.length; i++) {
+        (function (p) {
+            const b = document.createElement('button');
+            b.className = 'startBtn';
+            b.textContent = p.name;
+            b.setAttribute('data-preset', p.id);
+            if (p.note) b.title = p.note;
+            b.addEventListener('click', function () {
+                tapFeedback();
+                applyPresetCfg(p.cfg, '已选「' + p.name + '」');
+                startPresetId = p.id;      // applyPresetCfg 内部会清掉，所以放在它后面
+                syncStartPresets();
+            });
+            row.appendChild(b);
+        })(LEVEL_PRESETS[i]);
+    }
+
+    const custom = document.createElement('button');
+    custom.className = 'startBtn';
+    custom.id = 'startCustomBtn';
+    custom.textContent = '🛠 自定义';
+    custom.title = '打开关卡编辑器：改数值 / 存预设 / 下载 / 短码';
+    custom.addEventListener('click', function () {
+        tapFeedback();
+        startPresetId = '';
+        syncStartPresets();
+        toggleCfgPanel(true);
+    });
+    row.appendChild(custom);
+
+    syncStartPresets();
+}
+
+function syncStartPresets() {
+    const row = document.getElementById('startPresetRow');
+    if (!row) return;
+    const btns = row.querySelectorAll('[data-preset]');
+    for (let i = 0; i < btns.length; i++) {
+        btns[i].classList.toggle('is-on', btns[i].getAttribute('data-preset') === startPresetId);
+    }
+    const custom = document.getElementById('startCustomBtn');
+    if (custom) custom.classList.toggle('is-on', !startPresetId);
 }
 
 function buildPresetBar() {
@@ -895,7 +948,7 @@ function levelSummaryText() {
     parts.push('场地 ' + cols + '×' + rows);
     parts.push(teamMode === 'vs' ? '竞争' : '合作');
     parts.push('每步 ' + levelCfg.stepMs + 'ms');
-    parts.push('苹果 ' + levelCfg.apples);
+    parts.push('苹果 ' + (Math.round(levelCfg.apples) > 0 ? levelCfg.apples : '无上限'));
 
     if (levelCfg.enemies === false) {
         parts.push('敌人 关');

@@ -358,6 +358,41 @@
             background: rgba(255, 255, 255, 0.28);
         }
 
+        /* 两个「会开局」的大按钮 */
+        .start .startLaunch {
+            gap: 10px;
+        }
+
+        .startBtn.big {
+            width: auto;
+            flex: 1 1 0;
+            min-width: 120px;
+            height: 52px;
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        /* 开始页的预设按钮：一行能放几个放几个；选中的用 .is-on 高亮 */
+        .presetRow {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px;
+            width: 100%;
+        }
+
+        .presetRow .startBtn {
+            width: auto;
+            flex: 0 1 auto;
+            padding: 7px 11px;
+            font-size: 13px;
+        }
+
+        .presetRow .startBtn.is-on {
+            background: rgba(120, 220, 160, 0.32);
+            border-color: rgba(140, 240, 180, 0.7);
+        }
+
         /* 启动兜底提示：平时不显形，脚本没跑起来才在 2 秒后出现 */
         .bootWarn {
             position: fixed;
@@ -926,14 +961,28 @@
             <canvas id="board" aria-label="贪吃蛇棋盘"></canvas>
             <div class="start" id="startPanel">
                 <div class="title">🐍 贪吃蛇</div>
-                <div class="sub">选择模式</div>
-                <button class="startBtn" id="modeBtn1">单人游戏</button>
-                <button class="startBtn" id="modeBtnC">双人 · 合作</button>
-                <button class="startBtn" id="modeBtnV">双人 · 竞争</button>
-                <button class="startBtn" id="modeBtnNet">联机对战</button>
+
+                <!-- 只有这两个按钮会开始游戏：「本地」立刻开局，「开启房间」等别人进来 -->
+                <div class="row startLaunch">
+                    <button class="startBtn big" id="modeBtnLocal">▶ 本地</button>
+                    <button class="startBtn big" id="modeBtnNet">📡 开启房间</button>
+                </div>
+
+                <!-- 下面全是设置：点一下只是「选中」，不会开局 -->
+                <div class="sub">关卡</div>
+                <div class="presetRow" id="startPresetRow"></div>
+
+                <div class="row">
+                    <button class="startBtn small" id="startPlayersBtn">人数：1</button>
+                    <button class="startBtn small" id="startTeamBtn">合作</button>
+                    <button class="startBtn small" id="sfxBtn">🔊 音效：开</button>
+                </div>
+                <div class="row">
+                    <button class="startBtn ghost" id="levelBtnStart">🛠 自定义关卡（编辑器 / 存档 / 短码）</button>
+                </div>
+
                 <div class="levelInfo" id="levelInfo"></div>
-                <button class="startBtn ghost" id="levelBtnStart">🛠 关卡修改器</button>
-                <div class="tip">也可以直接按 1 / 2 / 3</div>
+                <div class="tip">快捷键：1 = 本地，2 = 开启房间</div>
                 <div class="tip">源码与发行版：
                     <a href="https://gitee.com/nxbznine_bilibili/h5-snake-army" target="_blank" rel="noreferrer">Gitee</a>
                     ·
@@ -981,6 +1030,7 @@
                 <div class="row">
                     <button class="startBtn small" id="cfgResetBtn">恢复默认</button>
                     <button class="startBtn small" id="cfgRestartBtn">按新关卡重开</button>
+                    <button class="startBtn small" id="sfxBtn2">🔊 音效：开</button>
                 </div>
                 <button class="startBtn" id="cfgCloseBtn">返回游戏</button>
             </div>
@@ -1164,6 +1214,7 @@
 
     <script src="./assets/config.js"></script>
     <script src="./assets/state.js"></script>
+    <script src="./assets/sfx.js"></script>
     <script src="./assets/net.js"></script>
     <script src="./assets/game.js"></script>
     <script src="./assets/render.js"></script>

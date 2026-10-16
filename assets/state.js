@@ -67,6 +67,10 @@ let enemyRespawns;  // 待补位的重生时间点
 let runStartAt;     // 本局开始时间，用来爬难度
 let drops;          // 敌人尸体掉落物 [{ x, y, kind, expireAt }]
 let corpses;
+// 开始页的设置（都不开局，只是记着「本地」按下去时用哪套）
+let localPlayerCount = 1;      // 1 或 2
+let localTeam = 'coop';        // 双人时：合作 / 竞争
+let startPresetId = '';        // 当前选中的内置预设（'' = 自定义）
 let cutFx;         // 剪短动画：被剪掉的头颈往回缩的残留效果 [{id, cells, hp, dir, at, bodyColor, headColor}]
 let cutFxSeq = 0;  // 流水号：联机时主机靠它知道哪几条还没发给客机        // 正在播阵亡动画的蛇 [{ body, hp, dir, diedAt, loot, bodyColor, headColor }]
 let nowRef;         // 本帧时间，画动画时用

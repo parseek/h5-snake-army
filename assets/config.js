@@ -47,6 +47,7 @@ const SEGMENT_HP = 2;           // 每一节蛇身的生命值
 const HP_REGEN_MS = 5000;       // 每节血量随时间线性回复：5 秒回 1 点
 const DEATH_ANIM_MS = 320;      // 敌人阵亡后缩小淡出的时长
 const CUT_FX_MS = 340;          // 被剪短的头颈「缩回去」的动画时长
+const CORPSE_EASE_MS = 150;     // 尸体从「死前画到的位置」缓出到撞进去那一格的时长
 const MIN_BODY_LEN = 2;         // 蛇身最短长度，砍到比这还短就直接死亡
 
 // 拓宽道具
@@ -412,9 +413,10 @@ const pauseBtnEl = document.getElementById('pauseBtn');
 const startPanelEl = document.getElementById('startPanel');
 // 版本号那行留给 index.html 去写：APP_VERSION 属于联机模块（net.js），
 // 这里（config.js）不该依赖它，否则两个脚本的加载顺序就互相锁死了。
-const startBtnSingleEl = document.getElementById('modeBtn1');
-const startBtnCoopEl = document.getElementById('modeBtnC');
-const startBtnVsEl = document.getElementById('modeBtnV');
+// 开始页只有两个「会开局」的按钮，其余都是设置
+const startBtnLocalEl = document.getElementById('modeBtnLocal');
+const startPlayersBtnEl = document.getElementById('startPlayersBtn');
+const startTeamBtnEl = document.getElementById('startTeamBtn');
 const startBtnNetEl = document.getElementById('modeBtnNet');
 const netPanelEl = document.getElementById('netPanel');
 const netStatusEl = document.getElementById('netStatus');
