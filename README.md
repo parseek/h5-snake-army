@@ -22,6 +22,16 @@
    `release/netlify-0.1.0.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
    不用碰 GitHub。包里只有 `index.html` + `assets/`。
 
+## 下载桌面版
+
+| 平台 | 发行版地址 |
+|---|---|
+| Gitee | <https://gitee.com/nxbznine_bilibili/h5-snake-army/releases/tag/v0.1.0> |
+| GitHub | <https://github.com/parseek/h5-snake-army/releases/tag/v0.1.0> |
+
+下载 `snake-army-0.1.0-win-x64.zip`（约 14.5 MB），解压后双击 `snake-army.exe` 就能玩，不用安装。
+包里已经带齐跨网要用的 EasyTier 二进制（见下面「跨网」一节）；只想玩玩在线版也行，不用下载。
+
 ## 玩法
 
 | 模式 | 说明 |
