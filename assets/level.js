@@ -302,8 +302,10 @@ const LEVEL_PRESETS = [
       cfg: { cols: 30, rows: 20, enemies: false, apples: 6, stepMs: 300, turretMax: 6 } },
     { id: 'giant', name: '巨幕', note: '200×150 大地图，镜头跟着你走',
       cfg: { cols: 200, rows: 150, apples: 12, enemyMax: 12, stepMs: 420, turretMax: 12 } },
-    { id: 'rail', name: '高铁大陆', note: '200×150 极速：玩家 100ms、敌人 5 倍速、道具刷得飞快',
-      cfg: { cols: 200, rows: 150, stepMs: 100, enemySpeed: 500, powerGap: 25, enemyGap: 3000, apples: 12, enemyMax: 12, turretMax: 12 } },
+    { id: 'rail', name: '高铁大陆', note: '200×150 极速：玩家 100ms、敌人 5 倍速、道具各 4 个',
+      cfg: { cols: 200, rows: 150, stepMs: 100, enemySpeed: 500, enemyGap: 3000, apples: 12, enemyMax: 12, turretMax: 12,
+        // 道具量：总倍率 25%（默认的 4 倍频）+ 每种同屏 4 个（原来是各 1 个）
+        powerGap: 25, i_speed_max: 4, i_widen_max: 4 } },
     { id: 'blitz', name: '闪电战', note: '180ms 一步、1 血，撞一下就出局',
       cfg: { stepMs: 180, hp0: 1, apples: 4, enemyMax: 4, turretCost: 1 } }
 ];
