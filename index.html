@@ -358,6 +358,46 @@
             background: rgba(255, 255, 255, 0.28);
         }
 
+        /* 开始页上的关卡摘要：小字、居中、能换行 */
+        .levelInfo {
+            max-width: 92%;
+            margin: 2px auto 6px;
+            font-size: 12px;
+            line-height: 1.6;
+            text-align: center;
+            opacity: 0.85;
+            word-break: break-word;
+        }
+
+        /* 次要入口（关卡修改器之类）：不抢主按钮的注意力 */
+        .startBtn.ghost {
+            background: rgba(255, 255, 255, 0.06);
+            border-style: dashed;
+            color: inherit;
+            font-size: 14px;
+        }
+
+        .startBtn.ghost:hover {
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        /* 关卡修改器：预设下拉框（窄屏也别撑破） */
+        #cfgPresetSel {
+            max-width: 100%;
+        }
+
+        /* 关卡修改器：分组小标题 + 行内小字提示 */
+        .start .tip.sec {
+            margin-top: 10px;
+            font-weight: 700;
+            opacity: 0.85;
+        }
+
+        .start .tip i {
+            font-style: normal;
+            opacity: 0.6;
+        }
+
         .startBtn.small {
             /* 以前是死宽 74px，「搜索附近房间」这种长一点的标签会被挤成两行 */
             width: auto;
@@ -397,9 +437,27 @@
             border-radius: 6px;
         }
 
+        /* 短码框：比普通输入框高一截，还能自己往下拉；
+           长码在里面换行，不撑出横向滚动条 */
+        #cfgCodeBox {
+            width: 88%;
+            height: 132px;
+            min-height: 96px;
+            max-height: 60vh;
+            /* 面板是 flex 列容器：不给 flex: 0 0 auto 的话，
+               flex-shrink 会把高度一直压到 min-height（量出来只有 96px） */
+            flex: 0 0 auto;
+            resize: vertical;
+            font-size: 12px;      /* 继承 .netIce 的 10px 太小了 */
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
         .start textarea {
             width: 88%;
             height: 84px;
+            resize: vertical;
             padding: 6px;
             font-family: ui-monospace, Consolas, monospace;
             font-size: 11px;
@@ -588,6 +646,13 @@
             color: #9fe8a0;
         }
 
+        /* 聊天里那条「导入这个关卡」的小按钮 */
+        .chatRow .chatImport {
+            margin-left: 6px;
+            padding: 2px 8px;
+            font-size: 12px;
+        }
+
         .chatInputRow {
             display: flex;
             gap: 6px;
@@ -743,6 +808,13 @@
                 font-size: 16px;
             }
 
+            /* 手机上拖拽不好使，短码框直接给够高度；字号必须 >= 16px */
+            #cfgCodeBox {
+                height: 150px;
+                max-height: 46vh;
+                font-size: 16px;
+            }
+
             .start {
                 padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
             }
@@ -802,33 +874,54 @@
                 <button class="startBtn" id="modeBtnC">双人 · 合作</button>
                 <button class="startBtn" id="modeBtnV">双人 · 竞争</button>
                 <button class="startBtn" id="modeBtnNet">联机对战</button>
+                <div class="levelInfo" id="levelInfo"></div>
+                <button class="startBtn ghost" id="levelBtnStart">🛠 关卡修改器</button>
                 <div class="tip">也可以直接按 1 / 2 / 3</div>
                 <div class="tip">在线版：<a href="https://renjisnake.netlify.app/" target="_blank" rel="noreferrer">renjisnake.netlify.app</a>
                     —— 不想下载的话，把这个地址发给朋友就能一起玩</div>
                 <div class="tip" id="verLine"></div>
             </div>
 
-            <!-- 房间设置：主机说了算，本地单人/双人一样能改；客机只读 -->
+            <!-- 关卡修改器：本地单人 / 双人 / 联机开房，改关卡都走这一个页面。
+                 内容由 level.js 按表生成；主机（含本地）可改，客机只读。 -->
             <div class="start" id="cfgPanel" hidden>
-                <div class="title">⚙ 房间设置</div>
+                <div class="title">🛠 关卡修改器</div>
                 <div class="tip" id="cfgWho"></div>
-                <div class="tip">下面两项是<b>调试用</b>的：实时改场地大小 —— 变大当场扩，变小按新尺寸重开一局。</div>
+
+                <!-- 关卡预设：内置几个，玩家自己存的放 localStorage，也能存成文件传来传去 -->
+                <div class="tip sec">关卡预设</div>
+                <select id="cfgPresetSel" class="netIce"></select>
+                <input id="cfgPresetName" class="netIce" spellcheck="false" placeholder="预设名字（存 / 删都用它）" />
                 <div class="row">
-                    <label class="field"><span>场地宽</span>
-                        <input id="cfgCols" class="netIce portInput" type="number" min="10" max="60" /></label>
-                    <label class="field"><span>场地高</span>
-                        <input id="cfgRows" class="netIce portInput" type="number" min="8" max="40" /></label>
+                    <button class="startBtn small" id="cfgPresetSaveBtn">存为预设</button>
+                    <button class="startBtn small" id="cfgPresetDelBtn">删除</button>
                 </div>
                 <div class="row">
-                    <button class="startBtn small" id="cfgCoop">合作</button>
-                    <button class="startBtn small" id="cfgVs">竞争</button>
-                    <button class="startBtn small" id="cfgEnemies">敌人：开</button>
-                    <button class="startBtn small" id="cfgPowerups">道具：开</button>
+                    <button class="startBtn small" id="cfgLevelDownBtn">下载关卡</button>
+                    <button class="startBtn small" id="cfgLevelUpBtn">加载文件</button>
+                    <input type="file" id="cfgLevelFile" accept=".json,application/json" hidden />
                 </div>
-                <input id="cfgName" class="netIce" spellcheck="false" placeholder="房间名（游戏里给对方看）" />
-                <input id="cfgDesc" class="netIce" spellcheck="false" placeholder="房间描述" />
+
+                <!-- 关卡短码：开头一段是给人看的（名字/尺寸/指纹），#SNK# 之后给程序 -->
+                <div class="tip sec">分享短码</div>
+                <div class="row">
+                    <button class="startBtn small" id="cfgCodeStyleBtn">编码：紧凑</button>
+                    <button class="startBtn small" id="cfgCodeMakeBtn">生成短码</button>
+                    <button class="startBtn small" id="cfgCodeChatBtn">发到聊天</button>
+                </div>
+                <textarea id="cfgCodeBox" class="netIce" rows="3" spellcheck="false"
+                          placeholder="生成的短码会出现在这里；别人给的短码粘进来再点「加载短码」（整段聊天记录也行）"></textarea>
+                <div class="row">
+                    <button class="startBtn small" id="cfgCodeLoadBtn">加载短码</button>
+                    <button class="startBtn small" id="cfgCodeCopyBtn">复制</button>
+                </div>
+
+                <div id="cfgBody"></div>
                 <div class="tip" id="cfgNote"></div>
-                <div class="tip">场地变大是<b>当场扩</b>（内容留在原地往右下长）；变小会按新尺寸重开一局。</div>
+                <div class="row">
+                    <button class="startBtn small" id="cfgResetBtn">恢复默认</button>
+                    <button class="startBtn small" id="cfgRestartBtn">按新关卡重开</button>
+                </div>
                 <button class="startBtn" id="cfgCloseBtn">返回游戏</button>
             </div>
 
@@ -867,20 +960,13 @@
 
                 <div class="lanBox" id="lanBox" hidden>
                     <input id="myName" class="netIce" spellcheck="false" placeholder="你的玩家名（对方看到的名字）" />
-                    <input id="roomName" class="netIce" spellcheck="false" placeholder="房间名" />
-                    <input id="roomDesc" class="netIce" spellcheck="false" placeholder="房间描述（给对方看，可留空）" />
-                    <!-- 场地 / 人数 / 端口：以前只靠 placeholder 说明，值一填上就只剩
-                         一串数字，认不出哪个是哪个。改成固定小标签。 -->
                     <div class="row">
-                        <label class="field"><span>场地宽</span>
-                            <input id="roomCols" class="netIce portInput" spellcheck="false" /></label>
-                        <label class="field"><span>场地高</span>
-                            <input id="roomRows" class="netIce portInput" spellcheck="false" /></label>
-                        <label class="field"><span>人数上限</span>
-                            <input id="roomMax" class="netIce portInput" spellcheck="false" /></label>
                         <label class="field"><span>端口</span>
                             <input id="roomPort" class="netIce portInput" spellcheck="false" /></label>
                     </div>
+                    <!-- 场地 / 人数 / 房间名这些都在关卡修改器里改，这里不再重复一套输入框 -->
+                    <div class="levelInfo" id="levelInfoNet"></div>
+                    <button class="startBtn ghost" id="levelBtnNet">🛠 关卡修改器（场地 / 人数 / 规则）</button>
                     <button class="startBtn" id="lanHostBtn">开个房间</button>
                     <div class="tip" id="lanMsg">同一个 Wi-Fi 下可以直接互相搜到</div>
                     <div class="row" id="lanScanRow">
@@ -1016,6 +1102,7 @@
     <script src="./assets/render.js"></script>
     <script src="./assets/input.js"></script>
     <script src="./assets/net-session.js"></script>
+    <script src="./assets/level.js"></script>
     <script>
 // ------------------------------ 启动层 ------------------------------
 // 主脚本只剩引导：版本号、主循环（guestTick / frame）、启动这三件事。
@@ -1099,10 +1186,7 @@ if (state === 'running') {
             buildTurret(p);
         }
 
-        if (p.boostUntil && now >= p.boostUntil) {
-            p.boostUntil = 0;
-            setStepMs(p, STEP_MS);
-        }
+        expirePlayerBoost(p, now);
 
         // 每帧最多累积一个步长：切到后台再回来不会瞬间追帧
         p.acc += Math.min(dtMs, p.stepMs);
@@ -1115,7 +1199,8 @@ if (state === 'running') {
     // 道具重生
     for (let i = 0; i < POWER_KINDS.length; i++) {
         const kind = POWER_KINDS[i];
-        if (!powerUps[kind] && powerRespawnAt[kind] && now >= powerRespawnAt[kind]) {
+        // 同屏还没到上限、且这个道具的刷新时间到了，就再刷一个
+        if (powerList(kind).length < powerMax(kind) && powerRespawnAt[kind] && now >= powerRespawnAt[kind]) {
             powerRespawnAt[kind] = 0;
             spawnPowerUp(kind);
         }
@@ -1135,10 +1220,7 @@ if (state === 'running') {
         if (en.spawnAt < 0) en.spawnAt = now;
 
         // 加速到期
-        if (en.boostUntil && now >= en.boostUntil) {
-            en.boostUntil = 0;
-            setEnemyStepMs(en, en.baseStepMs);
-        }
+        expireEnemyBoost(en, now);
 
         // 蓝蛇：到点就开火
         if (enemyDef(en).shoots && now >= en.shootAt) {
@@ -1171,20 +1253,7 @@ if (state === 'running') {
         corpses.splice(i, 1);
     }
 
-    // 蛇身血量随时间线性回复：HP_REGEN_MS 毫秒回 1 点
-    const regen = (dtSec * 1000) / HP_REGEN_MS;
-    for (let i = 0; i < players.length; i++) {
-        const hp = players[i].hp;
-        for (let k = 0; k < hp.length; k++) {
-            hp[k] = Math.min(SEGMENT_HP, hp[k] + regen);
-        }
-    }
-    for (let e = 0; e < enemies.length; e++) {
-        const hp = enemies[e].hp;
-        for (let i = 0; i < hp.length; i++) {
-            hp[i] = Math.min(SEGMENT_HP, hp[i] + regen);
-        }
-    }
+    regenHp(dtSec);
 }
 
 // 场地放大动画：画布尺寸和画面偏移一起缓入缓出

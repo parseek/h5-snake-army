@@ -37,6 +37,44 @@ function boosted(p) {
     return p.boostUntil > 0;
 }
 
+// 蛇身血量随时间线性回复：HP_REGEN_MS 毫秒回 1 点。
+// 上限是关卡设定的「每节血量」，不是默认常量 —— 生存关卡每节 3 血，
+// 写死 2 的话回了半天也回不满。
+function regenHp(dtSec) {
+    const regen = (dtSec * 1000) / HP_REGEN_MS;
+    const hpMax = levelCfg.hp0;
+    for (let i = 0; i < players.length; i++) {
+        const hp = players[i].hp;
+        for (let k = 0; k < hp.length; k++) {
+            hp[k] = Math.min(hpMax, hp[k] + regen);
+        }
+    }
+    for (let e = 0; e < enemies.length; e++) {
+        const hp = enemies[e].hp;
+        for (let i = 0; i < hp.length; i++) {
+            hp[i] = Math.min(hpMax, hp[i] + regen);
+        }
+    }
+}
+
+// 加速到期：步长恢复成「这个关卡的基准」。
+// 以前这里写死成默认的 500ms —— 关卡把基准调快之后（比如高铁大陆 100ms），
+// 加速一结束蛇会突然掉到 500ms，看着就是「变龟速」。
+function expirePlayerBoost(p, now) {
+    if (!p.boostUntil || now < p.boostUntil) return false;
+    p.boostUntil = 0;
+    setStepMs(p, levelCfg.stepMs);
+    return true;
+}
+
+// 敌人同理，恢复成它自己的基准（已经带着关卡倍率了）
+function expireEnemyBoost(en, now) {
+    if (!en.boostUntil || now < en.boostUntil) return false;
+    en.boostUntil = 0;
+    setEnemyStepMs(en, en.baseStepMs);
+    return true;
+}
+
 function canWiden() {
     return COLS + WIDEN_STEP * 2 <= MAX_COLS && ROWS + WIDEN_STEP * 2 <= MAX_ROWS;
 }
@@ -86,8 +124,8 @@ function freeCells() {
         taken.add(apples[i].y * COLS + apples[i].x);
     }
     for (let i = 0; i < POWER_KINDS.length; i++) {
-        const p = powerUps[POWER_KINDS[i]];
-        if (p) taken.add(p.y * COLS + p.x);
+        const list = powerList(POWER_KINDS[i]);
+        for (let k = 0; k < list.length; k++) taken.add(list[k].y * COLS + list[k].x);
     }
     const out = [];
     for (let i = 0; i < COLS * ROWS; i++) {
@@ -115,7 +153,7 @@ function spawnApple() {
 function appleTargetCount(now) {
     const byTime = APPLE_BASE + Math.floor(Math.max(0, now - runStartAt) / (APPLE_RAMP_SEC * 1000));
     const byScore = APPLE_BASE + Math.floor(topScore() / APPLE_RAMP_SCORE);
-    return Math.min(Math.max(byTime, byScore), APPLE_MAX);
+    return Math.min(Math.max(byTime, byScore), levelCfg.apples);
 }
 
 // 离某点最近的苹果（敌人 AI 用）
@@ -132,10 +170,34 @@ function nearestApple(p) {
     return best;
 }
 
+// 每种道具可以同时有多个，powerUps[kind] 是数组
+function powerList(kind) {
+    if (!powerUps[kind]) powerUps[kind] = [];
+    return powerUps[kind];
+}
+
+// 总开关 && 这种道具自己的开关
+function powerOn(kind) {
+    if (levelCfg.powerups === false) return false;
+    return levelCfg['i_' + kind + '_on'] !== false;
+}
+
+function powerMax(kind) {
+    return Math.max(1, Math.min(9, Math.round(levelCfg['i_' + kind + '_max'] || 1)));
+}
+
+// 刷新间隔 = 这种道具自己的间隔 × 总倍率（powerGap）
+function powerGapMs(kind) {
+    const base = Number(levelCfg['i_' + kind + '_gap']) || POWER_DEFS[kind].respawnMs;
+    return Math.max(200, Math.round(base * (levelCfg.powerGap / 100)));
+}
+
 function spawnPowerUp(kind) {
-    if (!roomCfg.powerups) return;                 // 主机关了道具就不再刷
-    if (kind === 'widen' && !canWiden()) return;   // 到上限就不再出现
-    powerUps[kind] = pickCell(freeCells());
+    if (!powerOn(kind)) return;                              // 总开关 / 这种自己的开关
+    if (powerList(kind).length >= powerMax(kind)) return;     // 已经到同屏上限
+    if (kind === 'widen' && !canWiden()) return;             // 场地到上限就不再出现
+    const spot = pickCell(freeCells());
+    if (spot) powerList(kind).push(spot);
 }
 
 // 把场上所有坐标平移 (dx, dy) 格。
@@ -154,10 +216,10 @@ function shiftWorld(dx, dy) {
         apples[i].y += dy;
     }
     for (let i = 0; i < POWER_KINDS.length; i++) {
-        const p = powerUps[POWER_KINDS[i]];
-        if (p) {
-            p.x += dx;
-            p.y += dy;
+        const list = powerList(POWER_KINDS[i]);
+        for (let k = 0; k < list.length; k++) {
+            list[k].x += dx;
+            list[k].y += dy;
         }
     }
     for (let e = 0; e < enemies.length; e++) {
@@ -200,7 +262,12 @@ function beginResize(cols, rows, dx, dy, now) {
     widenShiftY = dy;
     COLS = cols;
     ROWS = rows;
+    W = COLS * CELL;      // 世界尺寸当场就是新的；动画只影响「画出来多大」
+    H = ROWS * CELL;
     shiftWorld(dx, dy);
+    // 视口按「最终尺寸」先算好：动画期间只让画出来的场地矩形长大，
+    // 画布尺寸不再逐帧变（逐帧改 canvas.width 会清空画布，还费性能）
+    updateView();
     widenStartAt = now || gameNow || 1;   // 由主循环逐帧推进动画
     syncHud();
 }
@@ -221,8 +288,8 @@ function setArenaSize(cols, rows, now) {
     rows = Math.max(ARENA_MIN_ROWS, Math.min(ARENA_MAX_ROWS, Math.round(rows) || ROWS));
     if (cols === COLS && rows === ROWS) return 'same';
 
-    roomCfg.cols = cols;
-    roomCfg.rows = rows;
+    levelCfg.cols = cols;
+    levelCfg.rows = rows;
     START_COLS = cols;
     START_ROWS = rows;
     MAX_COLS = Math.max(cols + 10, MAX_COLS);
@@ -236,31 +303,61 @@ function setArenaSize(cols, rows, now) {
     return 'grew';
 }
 
-// 主机改了配置：能当场生效的当场生效，场地缩小这种只能重开
-// 返回 setArenaSize 的结果，UI 拿它决定提示什么
-function applyRoomCfg(cfg, now) {
+// 应用一份关卡配置：能当场生效的当场生效，场地缩小这种只能重开。
+// 返回 setArenaSize 的结果（'same' | 'grew' | 'restart' | 'ok'），UI 拿它决定提示什么。
+function applyLevelCfg(cfg, now) {
     if (!cfg) return 'same';
 
     if (TEAM_MODES[cfg.team]) teamMode = cfg.team;
-    roomCfg.team = teamMode;
+    levelCfg.team = teamMode;
 
-    const wantEnemies = cfg.enemies !== false;
-    if (roomCfg.enemies !== wantEnemies) {
-        roomCfg.enemies = wantEnemies;
-        if (!wantEnemies) {
-            enemies = [];        // 关掉就当场清场，别留着继续追人
-            enemyRespawns = [];
+    // 每步间隔：场上所有人立刻换成新的（大小写就是「关卡速度」）
+    if (typeof cfg.stepMs === 'number' && players) {
+        for (let i = 0; i < players.length; i++) {
+            if (players[i].alive) setStepMs(players[i], cfg.stepMs);
+        }
+        for (let i = 0; i < enemies.length; i++) setEnemyStepMs(enemies[i], enemies[i].baseStepMs);
+    }
+
+    // 复活道具关掉就把场上那个收走
+    if (cfg.revive === false && reviveItem) reviveItem = null;
+
+    // 敌人速度改了：场上这些立刻按新倍率重算（各自种类的快慢差异保留）
+    if (typeof cfg.enemySpeed === 'number') {
+        for (let i = 0; i < enemies.length; i++) {
+            const en = enemies[i];
+            const base = enemyBaseStep(enemyDef(en));
+            en.baseStepMs = base;
+            setEnemyStepMs(en, (en.boostUntil > now) ? base * SPEED_FACTOR : base);
         }
     }
 
-    const wantPowerups = cfg.powerups !== false;
-    if (roomCfg.powerups !== wantPowerups) {
-        roomCfg.powerups = wantPowerups;
-        if (!wantPowerups) {
-            powerUps = { speed: null, widen: null };
-            powerRespawnAt = { speed: 0, widen: 0 };
-        }
+    // 注意：调用方可能已经把值写进 levelCfg 了（面板就是先改再应用），
+    // 所以这里不能拿「变了没有」当条件，一律按结果做，重复调用也无害。
+    levelCfg.enemies = cfg.enemies !== false;
+    if (!levelCfg.enemies) {
+        enemies = [];            // 关掉就当场清场，别留着继续追人
+        enemyRespawns = [];
     }
+
+    levelCfg.powerups = cfg.powerups !== false;
+    if (!levelCfg.powerups) {
+        powerUps = { speed: [], widen: [] };
+        powerRespawnAt = { speed: 0, widen: 0 };
+    }
+    // 每种道具：关掉就清掉它的，上限调小就削到上限
+    for (let i = 0; i < POWER_KINDS.length; i++) {
+        const kind = POWER_KINDS[i];
+        const list = powerList(kind);
+        if (!powerOn(kind)) {
+            powerUps[kind] = [];
+            continue;
+        }
+        while (list.length > powerMax(kind)) list.pop();
+    }
+
+    if (cfg.revive !== undefined) levelCfg.revive = cfg.revive !== false;
+    if (!levelCfg.revive) reviveItem = null;
 
     if (typeof cfg.cols === 'number' && typeof cfg.rows === 'number') {
         return setArenaSize(cfg.cols, cfg.rows, now);
@@ -279,17 +376,17 @@ function makePlayer(i) {
     const off = [0, -3, 3, -6, 6, -9][sideIdx] || 0;
     const hy = Math.max(1, Math.min(ROWS - 2, Math.floor(ROWS / 2) + off));
     const body = [];
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < levelCfg.len0; k++) {
         body.push(cell(hx - d.x * k, hy - d.y * k));
     }
     return {
         def: def,
         body: body,
-        hp: [SEGMENT_HP, SEGMENT_HP],
+        hp: [levelCfg.hp0, levelCfg.hp0],
         dir: d,
         queue: [],
         acc: 0,
-        stepMs: STEP_MS,
+        stepMs: levelCfg.stepMs,
         boostUntil: 0,
         coins: 0,
         score: 0,
@@ -325,7 +422,7 @@ function reset() {
         players.push(makePlayer(i));
     }
 
-    powerUps = { speed: null, widen: null };
+    powerUps = { speed: [], widen: [] };
     powerRespawnAt = { speed: 0, widen: 0 };
     apples = [];
 
@@ -340,7 +437,8 @@ function reset() {
 
     spawnApple();
     for (let i = 0; i < POWER_KINDS.length; i++) {
-        spawnPowerUp(POWER_KINDS[i]);
+        const kind = POWER_KINDS[i];
+        for (let n = 0; n < powerMax(kind); n++) spawnPowerUp(kind);   // 同屏上限几个就铺几个
     }
     spawnEnemy(0);
     syncHud();
@@ -356,19 +454,19 @@ function syncPlayingClass() {
 function start(m, tm, arena) {
     if (MODES[m]) mode = m;
     if (TEAM_MODES[tm]) teamMode = tm;
-    roomCfg.team = teamMode;      // 面板上显示的、以及发给客机的，都是这一份
+    levelCfg.team = teamMode;      // 面板上显示的、以及发给客机的，都是这一份
 
     // arena 由联机房主给出：{ cols, rows, count }；本地模式不传。
-    // 主机在配置面板里改过尺寸（roomCfg.cols/rows）的话，本地开局也照那个来 ——
+    // 主机在配置面板里改过尺寸（levelCfg.cols/rows）的话，本地开局也照那个来 ——
     // 否则「改完场地尺寸，重开一局又变回去了」。
     const def = MODES[mode];
-    const useCols = (arena && arena.cols) || roomCfg.cols || def.cols;
-    const useRows = (arena && arena.rows) || roomCfg.rows || def.rows;
-    netArena = (arena || (roomCfg.cols && roomCfg.rows))
+    const useCols = (arena && arena.cols) || levelCfg.cols || def.cols;
+    const useRows = (arena && arena.rows) || levelCfg.rows || def.rows;
+    netArena = (arena || (levelCfg.cols && levelCfg.rows))
         ? {
             cols: useCols,
             rows: useRows,
-            maxPlayers: (arena && arena.maxPlayers) || roomCfg.maxPlayers,
+            maxPlayers: (arena && arena.maxPlayers) || levelCfg.maxPlayers,
             count: (arena && arena.count) || def.count
         }
         : null;
@@ -424,13 +522,22 @@ function turn(p, name) {
 
 // 拾取道具（哪一位吃到，加速就加在哪一位身上）
 function pickPowerUp(p, kind, now) {
-    powerUps[kind] = null;
-    powerRespawnAt[kind] = now + POWER_DEFS[kind].respawnMs;
+    // 把「脚下那一个」从列表里去掉（同屏可能有多个）
+    const head = p.body[0];
+    const list = powerList(kind);
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].x === head.x && list[i].y === head.y) {
+            list.splice(i, 1);
+            break;
+        }
+    }
+    // 这种道具自己的间隔 × 总倍率
+    powerRespawnAt[kind] = now + powerGapMs(kind);
 
     if (kind === 'speed') {
-        // 步长乘以 SPEED_FACTOR，并从现在起持续 SPEED_MS
-        setStepMs(p, STEP_MS * SPEED_FACTOR);
-        p.boostUntil = now + SPEED_MS;   // 重复拾取只刷新时间，不越叠越快
+        // 步长乘以 SPEED_FACTOR，并从现在起持续关卡设定的 boostMs
+        setStepMs(p, levelCfg.stepMs * SPEED_FACTOR);
+        p.boostUntil = now + levelCfg.boostMs;   // 重复拾取只刷新时间，不越叠越快
     } else if (kind === 'widen') {
         widenField(now);
     }
@@ -453,11 +560,13 @@ function step(p, now) {
 
     // 这一帧会吃到哪个道具（苹果和道具不会在同一格）
     let hitPower = null;
-    for (let i = 0; i < POWER_KINDS.length; i++) {
-        const pu = powerUps[POWER_KINDS[i]];
-        if (pu && pu.x === head.x && pu.y === head.y) {
-            hitPower = POWER_KINDS[i];
-            break;
+    for (let i = 0; i < POWER_KINDS.length && !hitPower; i++) {
+        const list = powerList(POWER_KINDS[i]);
+        for (let k = 0; k < list.length; k++) {
+            if (list[k].x === head.x && list[k].y === head.y) {
+                hitPower = POWER_KINDS[i];
+                break;
+            }
         }
     }
 
@@ -481,7 +590,7 @@ function step(p, now) {
     if (willGrow) {
         // 变长时给尾巴补一格血。血量按「从蛇头数第几节」对齐，
         // 所以蛇往前走时，受伤的那一节会跟着身体一起前进
-        p.hp.push(SEGMENT_HP);
+        p.hp.push(levelCfg.hp0);
     } else {
         p.body.pop();   // 道具 / 金币不增加长度
     }
@@ -627,11 +736,11 @@ function revivePartner(p, now) {
 
         q.body = spot.body;
         q.hp = [];
-        for (let k = 0; k < REVIVE_LEN; k++) q.hp.push(SEGMENT_HP);
+        for (let k = 0; k < REVIVE_LEN; k++) q.hp.push(levelCfg.hp0);
         q.dir = spot.dir;
         q.queue = [];
         q.acc = 0;
-        q.stepMs = STEP_MS;
+        q.stepMs = levelCfg.stepMs;
         q.boostUntil = 0;
         q.spawnAt = now;
         q.alive = true;
@@ -847,11 +956,18 @@ function nearestPlayerNext(from) {
 function enemyTargetCount(now) {
     const byTime = 1 + Math.floor(Math.max(0, now - runStartAt) / (ENEMY_RAMP_SEC * 1000));
     const byScore = 1 + Math.floor(topScore() / ENEMY_RAMP_SCORE);
-    return Math.min(Math.max(byTime, byScore), ENEMY_MAX);
+    return Math.min(Math.max(byTime, byScore), levelCfg.enemyMax);
 }
 
 function enemyDef(en) {
     return ENEMY_KINDS[en.kind] || ENEMY_KINDS.purple;
+}
+
+// 敌人每步间隔 = 种类自己的间隔 / 关卡倍率。
+// 用倍率而不是绝对值：紫/红/蓝本来快慢不同，改了倍率这个差异还留着。
+function enemyBaseStep(def) {
+    const f = Math.max(0.05, (levelCfg.enemySpeed || 100) / 100);
+    return Math.max(60, Math.round(def.stepMs / f));
 }
 
 // 越到后期，红蛇 / 蓝蛇出现得越多
@@ -864,7 +980,7 @@ function pickEnemyKind(now) {
 }
 
 function spawnEnemy(now) {
-    if (!roomCfg.enemies) return false;            // 主机关了敌人就不再刷
+    if (!levelCfg.enemies) return false;           // 主机关了敌人就不再刷
     const kind = pickEnemyKind(now);
     const def = ENEMY_KINDS[kind];
 
@@ -911,8 +1027,8 @@ function spawnEnemy(now) {
             enemies.push({
                 kind: kind,
                 body: body, dir: d, acc: 0,
-                hp: body.map(function () { return SEGMENT_HP; }),
-                baseStepMs: def.stepMs, stepMs: def.stepMs,
+                hp: body.map(function () { return levelCfg.hp0; }),
+                baseStepMs: enemyBaseStep(def), stepMs: enemyBaseStep(def),
                 spawnAt: -1, boostUntil: 0,
                 shootAt: now + ENEMY_SHOOT_MS
             });
@@ -955,7 +1071,7 @@ function killEnemy(target, now) {
     const i = enemies.indexOf(target);
     if (i === -1) return;
     enemies.splice(i, 1);
-    enemyRespawns.push(now + ENEMY_RESPAWN_MS);
+    enemyRespawns.push(now + levelCfg.enemyGap);
 
     // 不立刻消失：留一具会缩小淡出的尸体，动画放完才爆成战利品
     corpses.push({
@@ -1003,7 +1119,7 @@ function setEnemyStepMs(en, next) {
 
 // 到期的补位 + 难度上来了就补新蛇
 function updateEnemySpawns(now) {
-    if (!roomCfg.enemies) return;
+    if (!levelCfg.enemies) return;
     for (let i = enemyRespawns.length - 1; i >= 0; i--) {
         if (now < enemyRespawns[i]) continue;
         enemyRespawns.splice(i, 1);
@@ -1033,11 +1149,18 @@ function stepEnemy(self, now) {
 
     const eatIdx = appleIndexAt(head.x, head.y);
     const willEat = eatIdx !== -1;
-    const sp = powerUps.speed;
+    const spList = powerList('speed');
+    let sp = null;
+    for (let i = 0; i < spList.length; i++) {
+        if (spList[i].x === head.x && spList[i].y === head.y) {
+            sp = spList[i];
+            break;
+        }
+    }
 
     self.body.unshift(head);
     if (willEat) {
-        self.hp.push(SEGMENT_HP);   // 变长时尾巴补一格血
+        self.hp.push(levelCfg.hp0);   // 变长时尾巴补一格血
         apples.splice(eatIdx, 1);
         spawnApple();               // 苹果被它抢走了，补一个新的
     } else {
@@ -1045,10 +1168,11 @@ function stepEnemy(self, now) {
     }
 
     // 敌人也会抢加速道具
-    if (sp && head.x === sp.x && head.y === sp.y) {
-        powerUps.speed = null;
-        powerRespawnAt.speed = now + POWER_DEFS.speed.respawnMs;
-        self.boostUntil = now + SPEED_MS;
+    if (sp) {
+        const k = spList.indexOf(sp);
+        if (k >= 0) spList.splice(k, 1);
+        powerRespawnAt.speed = now + powerGapMs('speed');
+        self.boostUntil = now + levelCfg.boostMs;
         setEnemyStepMs(self, self.baseStepMs * SPEED_FACTOR);
     }
 
@@ -1075,19 +1199,19 @@ function turretCount(p) {
 
 function canBuild(p) {
     return state === 'running' && p.alive &&
-        p.body.length >= TURRET_MIN_LEN &&
-        turretCount(p) < TURRET_MAX &&
-        p.coins >= TURRET_COIN_COST;
+        p.body.length >= levelCfg.turretCost + 2 &&   // 建完至少还剩两节
+        turretCount(p) < levelCfg.turretMax &&
+        p.coins >= levelCfg.turretCoins;
 }
 
-// 从自己尾巴截下 TURRET_COST 节，塔就建在被截掉的尾尖那一格
+// 从自己尾巴截下 turretCost 节，塔就建在被截掉的尾尖那一格
 function buildTurret(p) {
     if (!canBuild(p)) return false;
 
     const spot = p.body[p.body.length - 1];
-    p.body.length -= TURRET_COST;
+    p.body.length -= levelCfg.turretCost;
     p.hp.length = p.body.length;
-    p.coins -= TURRET_COIN_COST;
+    p.coins -= levelCfg.turretCoins;
     syncHud();
     turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0, owner: p });
     return true;

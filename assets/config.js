@@ -52,9 +52,9 @@ const MIN_BODY_LEN = 2;         // 蛇身最短长度，砍到比这还短就直
 const WIDEN_STEP = 1;           // 每次拓宽：上下左右各加这么多格
 // 主机在配置面板里能设的场地范围（和信令服务端的夹取范围保持一致）
 const ARENA_MIN_COLS = 10;
-const ARENA_MAX_COLS = 60;
+const ARENA_MAX_COLS = 200;    // 60 -> 200：有了摄像机，大地图只是「多滚动一点」
 const ARENA_MIN_ROWS = 8;
-const ARENA_MAX_ROWS = 40;
+const ARENA_MAX_ROWS = 150;    // 40 -> 150
 const WIDEN_ANIM_MS = 400;      // 场地放大的动画时长，走的也是下面那条缓动曲线
 
 // 敌人蛇：数量随着存活时间和得分越来越多
@@ -104,6 +104,47 @@ const POWER_DEFS = {
     widen: { respawnMs: 12000 }
 };
 const POWER_KINDS = ['speed', 'widen'];
+
+// ------------------------------ 关卡配置 ------------------------------
+// 关卡修改器里能改的一切。默认值全部取自上面这些常量 ——
+// 不动它就是「加入这个功能之前」的行为，探针也按默认值跑。
+function levelDefaults() {
+    return {
+        // 场地 / 玩法 / 房间信息
+        cols: 0,              // 0 = 用当前模式的默认场地
+        rows: 0,
+        team: 'coop',         // 'coop' | 'vs'
+        maxPlayers: 2,        // 人数上限：只在开房那一刻生效
+        name: '',
+        desc: '',
+
+        // 蛇
+        len0: 2,              // 初始身长（节）
+        hp0: SEGMENT_HP,      // 每一节的血量（也是血条上限）
+        stepMs: STEP_MS,      // 每走一步的间隔，越小越快
+
+        // 场上刷什么
+        apples: APPLE_MAX,    // 同屏苹果上限
+        enemies: true,
+        enemyMax: ENEMY_MAX,  // 同时存在的敌人上限
+        enemySpeed: 100,      // 敌人速度（%，100 = 原速）—— 三类敌人各自按这个倍率缩放
+        powerGap: 100,        // 道具刷新间隔总倍率（%，越小刷得越快）：每种自己的间隔再乘它
+        enemyGap: ENEMY_RESPAWN_MS,   // 敌人阵亡后多久补位
+        powerups: true,       // 道具总开关
+        boostMs: SPEED_MS,    // 加速道具持续多久
+        revive: true,         // 复活道具开关（不是计时刷的，队友出局才出现）
+
+        // 每种道具单独设：要不要生成 / 隔多久刷一个 / 同屏最多几个
+        // （默认 = 加这个功能之前的 POWER_DEFS.respawnMs 和「同屏 1 个」）
+        i_speed_on: true, i_speed_gap: 10000, i_speed_max: 1,
+        i_widen_on: true, i_widen_gap: 12000, i_widen_max: 1,
+
+        // 炮塔
+        turretCost: TURRET_COST,        // 建塔消耗的身长（节）
+        turretCoins: TURRET_COIN_COST,  // 建塔消耗的币
+        turretMax: TURRET_MAX
+    };
+}
 
 // 缓动曲线（蛇身移动、场地放大都用它）：
 //   'easeInOutCubic' 缓入缓出（默认，起步慢、中间快、收尾再慢下来）
@@ -187,6 +228,32 @@ let ROWS = START_ROWS;
 let W = COLS * CELL;
 let H = ROWS * CELL;
 
+// ------------------------------ 视口与摄像机 ------------------------------
+// 世界 = 整个场地（W×H 像素）。视口 = 画布能显示多大一块。
+// 小场地时视口就等于世界（行为和以前一模一样）；场地比屏幕大时视口小于世界，
+// 靠摄像机 camX/camY（世界像素里的左上角）在里面移动。
+// 格子大小始终是 CELL（20px），所以大地图上是「滚动」，不是「缩小到看不清」。
+let VIEW_W = 0;
+let VIEW_H = 0;
+let camX = 0;
+let camY = 0;
+
+// 放大动画期间「场地已经长到多大」。世界尺寸（W/H）在动画一开始就是最终值，
+// 这块才是逐帧变大的那个 —— 视口、摄像机、裁剪都按它算。
+let drawWorldW = COLS * CELL;
+let drawWorldH = ROWS * CELL;
+
+// 场地是不是正在长大（主机客机都靠它判断）
+function boardGrowing() {
+    return drawWorldW < W - 0.01 || drawWorldH < H - 0.01;
+}
+
+// 动画期间对外就表现成「场地现在这么大」：小场地时视口跟着一起长，
+// 画布一点点变大 —— 和加摄像机之前的扩展动画一模一样；
+// 场地比屏幕大时视口顶在屏幕尺寸上，改成场地在视口里长大。
+function boardWorldW() { return boardGrowing() ? drawWorldW : W; }
+function boardWorldH() { return boardGrowing() ? drawWorldH : H; }
+
 // 放大动画期间的画面偏移（单位 px）：逻辑坐标不动，只挪绘制位置
 let renderOffsetX = 0;
 let renderOffsetY = 0;
@@ -203,12 +270,14 @@ const ctx = canvas.getContext('2d');
 // 按设备像素比放大画布，避免高分屏发虚
 const dpr = Math.min(window.devicePixelRatio || 1, 3);
 
-function setCanvasSize(w, h) {
-    W = w;
-    H = h;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = W + 'px';
+// 只管画布（视口）。世界的 W/H 由 COLS/ROWS 决定，别在这里改 ——
+// 以前它顺手写 W/H，加了摄像机之后那样会把世界尺寸也一起改掉。
+function setCanvasSize(viewW, viewH) {
+    VIEW_W = viewW;
+    VIEW_H = viewH;
+    canvas.width = VIEW_W * dpr;
+    canvas.height = VIEW_H * dpr;
+    canvas.style.width = VIEW_W + 'px';
     // 高度交给 CSS（auto）：窄屏上 max-width:100% 才能等比缩，不会拉变形
     canvas.style.height = 'auto';
 }
@@ -217,8 +286,57 @@ function setCanvasSize(w, h) {
 function resizeCanvas() {
     renderOffsetX = 0;
     renderOffsetY = 0;
-    setCanvasSize(COLS * CELL, ROWS * CELL);
+    W = COLS * CELL;
+    H = ROWS * CELL;
+    drawWorldW = W;
+    drawWorldH = H;
+    updateView();
 }
+
+// 视口的可用面积：把 HUD / 操作区 / 联机状态条占的高度扣掉，
+// 再按整格取整（格子大小固定，宁可少一格也不要露出半格）。
+function updateView() {
+    const bs = getComputedStyle(document.body);
+    const padX = (parseFloat(bs.paddingLeft) || 0) + (parseFloat(bs.paddingRight) || 0);
+    const availW = Math.max(5 * CELL, (window.innerWidth || 800) - padX);
+
+    let usedY = 0;
+    for (const el of [document.querySelector('.hud'), document.querySelector('.pads'), document.getElementById('netBar')]) {
+        if (el && !el.hidden) usedY += el.offsetHeight + 8;
+    }
+    const availH = Math.max(5 * CELL, (window.innerHeight || 600) - usedY - 20);
+
+    availViewW = Math.max(5 * CELL, Math.floor(availW / CELL) * CELL);
+    availViewH = Math.max(5 * CELL, Math.floor(availH / CELL) * CELL);
+    syncViewToBoard();
+}
+
+// 量到的可用面积（整格）。updateView 负责量，同步画布尺寸时不再读布局 ——
+// 放大动画每帧都要同步，不能每帧都去 getComputedStyle + 读 offsetHeight。
+let availViewW = 0;
+let availViewH = 0;
+
+// 按「场地现在多大」定画布尺寸：
+//   小场地 -> 画布 = 场地（动画期间就是一点点长大，老效果）
+//   大地图 -> 画布 = 屏幕可用面积（尺寸不变，一次 canvas 重分配都不会发生）
+function syncViewToBoard() {
+    const vw = Math.min(boardWorldW(), availViewW || boardWorldW());
+    const vh = Math.min(boardWorldH(), availViewH || boardWorldH());
+    if (vw === VIEW_W && vh === VIEW_H) return;
+
+    setCanvasSize(vw, vh);
+    camX = clampCam(camX, boardWorldW(), VIEW_W);
+    camY = clampCam(camY, boardWorldH(), VIEW_H);
+}
+
+// 把摄像机夹在世界里；世界比视口还小的话就居中（等于不启用摄像机）
+function clampCam(v, world, view) {
+    if (world <= view) return (world - view) / 2;
+    return Math.max(0, Math.min(world - view, v));
+}
+
+// 窗口大小变了、操作区高度变了（单人 / 双人 / 观战皮肤不同），都重算一次
+window.addEventListener('resize', function () { updateView(); });
 
 // 放大动画的中间帧：画布尺寸从旧尺寸长到新尺寸，
 // 画面同时从「旧位置」滑到「新位置」，两者共用同一条缓动曲线
@@ -226,12 +344,12 @@ function resizeCanvas() {
 // 拓宽道具是「上下左右各加一格 + 内容整体平移一格」，
 // 主机在配置面板里改尺寸是「内容不动、往右下长」（shift 为 0）—— 同一套动画。
 function applyWidenFrame(e) {
-    setCanvasSize(
-        Math.round((widenFromCols + (COLS - widenFromCols) * e) * CELL),
-        Math.round((widenFromRows + (ROWS - widenFromRows) * e) * CELL)
-    );
+    // 世界尺寸在 beginResize 里就已经改好了，这里是逐帧的「长到多大」
+    drawWorldW = widenFromCols * CELL + (W - widenFromCols * CELL) * e;
+    drawWorldH = widenFromRows * CELL + (H - widenFromRows * CELL) * e;
     renderOffsetX = -(1 - e) * widenShiftX * CELL;
     renderOffsetY = -(1 - e) * widenShiftY * CELL;
+    syncViewToBoard();     // 场地长到多大画布就多大（大地图时这一步啥也不做）
 }
 
 resizeCanvas();

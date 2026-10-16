@@ -148,13 +148,13 @@ function netLeave() {
 
 // ------------------------------ 联机：场地与人数 ------------------------------
 // 房主开房时定的那份；连接码模式没有房间面板，就给一份默认的宽场地
-// 房间/对局配置：房主开房时填进去，面板里能接着改（都在 state.js 的 roomCfg 那一个对象里）
+// 房间/对局配置：房主开房时填进去，面板里能接着改（都在 state.js 的 levelCfg 那一个对象里）
 
 function netArenaCfg() {
     return {
-        cols: roomCfg.cols || 30,
-        rows: roomCfg.rows || 15,
-        maxPlayers: roomCfg.maxPlayers || MAX_PLAYERS
+        cols: levelCfg.cols || 30,
+        rows: levelCfg.rows || 15,
+        maxPlayers: levelCfg.maxPlayers || MAX_PLAYERS
     };
 }
 
@@ -522,6 +522,28 @@ function netUnpackBody(a) {
 function netRound(v) { return Math.round(v * 100) / 100; }
 
 // 主机 -> 客机：把渲染需要的一切打包（客机不跑逻辑，只照着重画）
+// 关卡配置整个打包带走 —— 以前是这里列一遍、客机那边再列一遍，
+// 加一个字段最容易漏掉客机那一半。
+function netPackCfg() {
+    const out = {};
+    for (const k in levelCfg) out[k] = levelCfg[k];
+    out.cols = levelCfg.cols || COLS;      // 0 = 跟随模式默认，这里换成真实值
+    out.rows = levelCfg.rows || ROWS;
+    out.team = teamMode;
+    return out;
+}
+
+// 客机：整个合并回来。客机不跑逻辑，这些值只用于显示和「照着画」
+function netApplyCfg(cfg) {
+    if (!cfg) return;
+    for (const k in cfg) {
+        if (k === 'team' && !TEAM_MODES[cfg[k]]) continue;
+        if (typeof levelCfg[k] === 'number' && typeof cfg[k] !== 'number') continue;
+        levelCfg[k] = cfg[k];
+    }
+    if (TEAM_MODES[cfg.team]) teamMode = cfg.team;
+}
+
 function netSnapshot() {
     return {
         t: 'state',
@@ -530,20 +552,13 @@ function netSnapshot() {
         cols: COLS, rows: ROWS,
         w: W, h: H,
         ox: Math.round(renderOffsetX), oy: Math.round(renderOffsetY),
+        // 放大动画进行到哪了：场地已经长到多大（客机不跑动画，照这个画）
+        bw: Math.round(drawWorldW), bh: Math.round(drawWorldH),
         wid: widenStartAt ? Math.round(widenStartAt) : 0,
         wfc: widenFromCols, wfr: widenFromRows,
         mode: mode, team: teamMode, best: best,
-        // 房间配置：客机只读，面板上照着显示（cols/rows 是「初始尺寸」，
-        // 场上的实时尺寸另有 cols/rows 字段，别看混了）
-        cfg: {
-            cols: roomCfg.cols || COLS,
-            rows: roomCfg.rows || ROWS,
-            team: teamMode,
-            enemies: roomCfg.enemies,
-            powerups: roomCfg.powerups,
-            name: roomCfg.name,
-            desc: roomCfg.desc
-        },
+        // 关卡配置整个带过去：客机只读，面板上照着显示
+        cfg: netPackCfg(),
         pl: players.map(function (p, i) {
             return {
                 i: i,
@@ -567,9 +582,9 @@ function netSnapshot() {
             };
         }),
         ap: apples.map(function (a) { return [a.x, a.y]; }),
-        pw: {
-            speed: powerUps.speed ? [powerUps.speed.x, powerUps.speed.y] : null,
-            widen: powerUps.widen ? [powerUps.widen.x, powerUps.widen.y] : null
+        pw: {   // 每种道具可能有好几个
+            speed: powerList('speed').map(function (p) { return [p.x, p.y]; }),
+            widen: powerList('widen').map(function (p) { return [p.x, p.y]; })
         },
         pr: {
             speed: Math.round(powerRespawnAt.speed || 0),
@@ -596,24 +611,20 @@ function netApplySnapshot(m) {
     if (typeof m.you === 'number') netSeat = m.you;   // 主机告诉我坐哪儿（< 0 = 观战）
     mode = m.mode;
     teamMode = m.team;
-    if (m.cfg) {                       // 房间配置：客机只照着显示，不生效（逻辑都在主机那边跑）
-        roomCfg.cols = m.cfg.cols || 0;
-        roomCfg.rows = m.cfg.rows || 0;
-        roomCfg.team = m.cfg.team || teamMode;
-        roomCfg.enemies = m.cfg.enemies !== false;
-        roomCfg.powerups = m.cfg.powerups !== false;
-        roomCfg.name = m.cfg.name || '';
-        roomCfg.desc = m.cfg.desc || '';
-    }
+    netApplyCfg(m.cfg);                // 关卡配置：客机只照着显示，逻辑仍在主机那边跑
     best = m.best;
 
-    if (COLS !== m.cols || ROWS !== m.rows || W !== m.w || H !== m.h) {
+    if (COLS !== m.cols || ROWS !== m.rows) {
         COLS = m.cols;
         ROWS = m.rows;
-        setCanvasSize(m.w, m.h);
+        // 视口按本机屏幕算，不再照抄主机的画布尺寸 ——
+        // 大地图靠摄像机滚动，手机和主机的可视范围本来就不一样。
+        resizeCanvas();
     }
     renderOffsetX = m.ox;
     renderOffsetY = m.oy;
+    // 场地已经长到多大：放在 resizeCanvas 之后写，动画期间才不会被整块场地尺寸盖掉
+    if (typeof m.bw === 'number') { drawWorldW = m.bw; drawWorldH = m.bh; syncViewToBoard(); }
     widenStartAt = m.wid;
     widenFromCols = m.wfc;
     widenFromRows = m.wfr;
@@ -638,8 +649,8 @@ function netApplySnapshot(m) {
 
     apples = m.ap.map(function (a) { return { x: a[0], y: a[1] }; });
     powerUps = {
-        speed: m.pw.speed ? { x: m.pw.speed[0], y: m.pw.speed[1] } : null,
-        widen: m.pw.widen ? { x: m.pw.widen[0], y: m.pw.widen[1] } : null
+        speed: (m.pw.speed || []).map(function (a) { return { x: a[0], y: a[1] }; }),
+        widen: (m.pw.widen || []).map(function (a) { return { x: a[0], y: a[1] }; })
     };
     powerRespawnAt = { speed: m.pr.speed, widen: m.pr.widen };
     reviveItem = m.rv ? { x: m.rv[0], y: m.rv[1] } : null;
@@ -669,29 +680,29 @@ function netApplySnapshot(m) {
 // 主机说了算：地图初始大小、合作/竞争、敌人、道具、房间名与描述。
 // 本地单人 / 本地双人一样能改（那时「主机」就是你自己）；客机只读。
 // 改完立即生效：模式类当场换，场地变大当场扩，变小会按新尺寸重开一局。
-let cfgOpen = false;
-let cfgResume = false;     // 进面板前是不是在跑，关掉时恢复
+let oldCfgOpen = false;
+let oldCfgResume = false;     // 进面板前是不是在跑，关掉时恢复
 
-function cfgNote(text) {
+function _oldCfgNote(text) {
     const el = document.getElementById('cfgNote');
     if (el) el.textContent = text || "";
 }
 
 // 面板同步：按角色决定可改还是只读，并把当前值刷上去
-function syncCfgPanel() {
+function _oldSyncCfgPanel() {
     const panel = document.getElementById('cfgPanel');
     if (!panel) return;
     const isGuest = netRole === 'guest';
-    const cols = roomCfg.cols || COLS;
-    const rows = roomCfg.rows || ROWS;
+    const cols = levelCfg.cols || COLS;
+    const rows = levelCfg.rows || ROWS;
     const setVal = function (id, v) {
         const el = document.getElementById(id);
         if (el && document.activeElement !== el && el.value !== String(v)) el.value = v;
     };
     setVal('cfgCols', cols);
     setVal('cfgRows', rows);
-    setVal('cfgName', roomCfg.name || '');
-    setVal('cfgDesc', roomCfg.desc || '');
+    setVal('cfgName', levelCfg.name || '');
+    setVal('cfgDesc', levelCfg.desc || '');
     for (const id of ['cfgCols', 'cfgRows', 'cfgName', 'cfgDesc']) {
         const el = document.getElementById(id);
         if (el) el.disabled = isGuest;
@@ -699,8 +710,8 @@ function syncCfgPanel() {
     const pair = [
         ['cfgCoop', 'coop', teamMode === 'coop'],
         ['cfgVs', 'vs', teamMode === 'vs'],
-        ['cfgEnemies', null, roomCfg.enemies],
-        ['cfgPowerups', null, roomCfg.powerups]
+        ['cfgEnemies', null, levelCfg.enemies],
+        ['cfgPowerups', null, levelCfg.powerups]
     ];
     for (const [id, , on] of pair) {
         const b = document.getElementById(id);
@@ -709,9 +720,9 @@ function syncCfgPanel() {
         b.disabled = isGuest;
     }
     const en = document.getElementById('cfgEnemies');
-    if (en) en.textContent = roomCfg.enemies ? '敌人：开' : '敌人：关';
+    if (en) en.textContent = levelCfg.enemies ? '敌人：开' : '敌人：关';
     const pw = document.getElementById('cfgPowerups');
-    if (pw) pw.textContent = roomCfg.powerups ? '道具：开' : '道具：关';
+    if (pw) pw.textContent = levelCfg.powerups ? '道具：开' : '道具：关';
     const who = document.getElementById('cfgWho');
     if (who) {
         who.textContent = isGuest ? '配置由主机控制（这边只读）'
@@ -720,17 +731,17 @@ function syncCfgPanel() {
 }
 
 // 面板上改一项：合到当前配置里再应用
-function setCfg(patch) {
+function _oldSetCfg(patch) {
     if (netRole === 'guest') return;              // 客机没有修改权
     const next = {
-        cols: roomCfg.cols || COLS,
-        rows: roomCfg.rows || ROWS,
-        team: roomCfg.team,
-        enemies: roomCfg.enemies,
-        powerups: roomCfg.powerups
+        cols: levelCfg.cols || COLS,
+        rows: levelCfg.rows || ROWS,
+        team: levelCfg.team,
+        enemies: levelCfg.enemies,
+        powerups: levelCfg.powerups
     };
     for (const k in patch) next[k] = patch[k];
-    const res = applyRoomCfg(next, gameNow);
+    const res = applyLevelCfg(next, gameNow);
     if (res === 'restart') cfgNote('场地变小了 —— 已按 ' + COLS + '×' + ROWS + ' 重开一局');
     else if (res === 'grew') cfgNote('场地已扩到 ' + COLS + '×' + ROWS);
     else cfgNote("");
@@ -739,22 +750,22 @@ function setCfg(patch) {
     syncNetBar();
 }
 
-function toggleCfgPanel(open) {
+function _oldToggleCfgPanel(open) {
     const panel = document.getElementById('cfgPanel');
     if (!panel) return;
     const want = (open === undefined) ? panel.hidden : !!open;
-    if (want === cfgOpen) return;
+    if (want === oldCfgOpen) return;
     panel.hidden = !want;
-    cfgOpen = want;
+    oldCfgOpen = want;
     if (want) {
         if (netRole !== 'guest' && state === 'running') {   // 改配置时先把局停下来
-            cfgResume = true;
+            oldCfgResume = true;
             togglePause();
         }
         cfgNote("");
         syncCfgPanel();
-    } else if (cfgResume) {
-        cfgResume = false;
+    } else if (oldCfgResume) {
+        oldCfgResume = false;
         if (state === 'paused') togglePause();
     }
 }
@@ -764,6 +775,11 @@ function toggleCfgPanel(open) {
 // 单机（没联机）时消息只留在自己屏幕上，输入框照样能用。
 const CHAT_MAX = 200;      // 单条长度上限
 const CHAT_KEEP = 100;     // 本地最多留多少条
+
+// 列表重建的判据。以前比的是「条数变了没有」——
+// 条数一样但内容变了（超出 CHAT_KEEP 把老消息挤掉、或者同一条消息里多了个按钮）就不重画了。
+let chatVersion = 0;
+let chatShown = -1;
 
 function chatMyName() {
     const box = document.getElementById('myName');
@@ -778,6 +794,7 @@ function chatPush(name, text, me) {
     if (!text) return;
     chatLog.push({ me: !!me, name: String(name || '?').slice(0, 16), text: text, at: Date.now() });
     while (chatLog.length > CHAT_KEEP) chatLog.shift();
+    chatVersion++;
     if (!chatOpen) chatUnread++;
     renderChat();
 }
@@ -785,14 +802,20 @@ function chatPush(name, text, me) {
 function chatSend() {
     const input = document.getElementById('chatInput');
     if (!input) return;
-    const text = String(input.value || '').trim().slice(0, CHAT_MAX);
-    if (!text) return;
+    if (!chatSendText(input.value)) return;
     input.value = '';
+}
+
+// 发一条消息（聊天框和「发到聊天」都走这里）。返回有没有发出去。
+function chatSendText(text) {
+    text = String(text || '').trim().slice(0, CHAT_MAX);
+    if (!text) return false;
     const me = chatMyName();
     chatPush(me, text, true);
-    if (!netOpen) return;                       // 单机：只显示在自己屏幕上
+    if (!netOpen) return true;                  // 单机：只显示在自己屏幕上
     if (netRole === 'host') netBroadcast({ t: 'chat', seat: 0, name: me, text: text });
     else netSend({ t: 'chat', text: text });
+    return true;
 }
 
 function toggleChat(open) {
@@ -819,7 +842,8 @@ function renderChat() {
         btn.classList.toggle('has-new', chatUnread > 0);
     }
     if (!chatOpen) return;
-    if (list.childElementCount !== chatLog.length) {
+    if (chatShown !== chatVersion) {
+        chatShown = chatVersion;
         list.innerHTML = '';
         for (let i = 0; i < chatLog.length; i++) {
             const m = chatLog[i];
@@ -831,6 +855,17 @@ function renderChat() {
             txt.textContent = m.text;          // 永远走 textContent：消息不是 HTML
             row.appendChild(who);
             row.appendChild(txt);
+
+            // 消息里带关卡短码的话，顺手给个一键导入（不用去复制粘贴）
+            if (typeof looksLikeLevelCode === 'function' && looksLikeLevelCode(m.text)) {
+                const btn = document.createElement('button');
+                btn.className = 'miniBtn ok chatImport';
+                btn.textContent = '导入这个关卡';
+                btn.addEventListener('click', function () {
+                    if (typeof importLevelCode === 'function') importLevelCode(extractLevelCode(m.text));
+                });
+                row.appendChild(btn);
+            }
             list.appendChild(row);
         }
         list.scrollTop = list.scrollHeight;
@@ -841,8 +876,8 @@ function renderChat() {
 if (document.getElementById('cfgCoop')) {
     document.getElementById('cfgCoop').addEventListener('click', function () { setCfg({ team: 'coop' }); });
     document.getElementById('cfgVs').addEventListener('click', function () { setCfg({ team: 'vs' }); });
-    document.getElementById('cfgEnemies').addEventListener('click', function () { setCfg({ enemies: !roomCfg.enemies }); });
-    document.getElementById('cfgPowerups').addEventListener('click', function () { setCfg({ powerups: !roomCfg.powerups }); });
+    document.getElementById('cfgEnemies').addEventListener('click', function () { setCfg({ enemies: !levelCfg.enemies }); });
+    document.getElementById('cfgPowerups').addEventListener('click', function () { setCfg({ powerups: !levelCfg.powerups }); });
     document.getElementById('cfgCloseBtn').addEventListener('click', function () { toggleCfgPanel(false); });
     for (const id of ['cfgCols', 'cfgRows']) {
         document.getElementById(id).addEventListener('change', function () {
@@ -853,10 +888,10 @@ if (document.getElementById('cfgCoop')) {
         });
     }
     document.getElementById('cfgName').addEventListener('input', function () {
-        if (netRole !== 'guest') roomCfg.name = this.value.trim().slice(0, 24);
+        if (netRole !== 'guest') levelCfg.name = this.value.trim().slice(0, 24);
     });
     document.getElementById('cfgDesc').addEventListener('input', function () {
-        if (netRole !== 'guest') roomCfg.desc = this.value.trim().slice(0, 80);
+        if (netRole !== 'guest') levelCfg.desc = this.value.trim().slice(0, 80);
     });
 }
 if (document.getElementById('chatBtn')) {
@@ -1060,9 +1095,7 @@ if (NATIVE) {
     document.getElementById('etNetwork').value = 'snake-' + Math.random().toString(36).slice(2, 7);
     // 端口默认随机一个，避免两边固定端口撞车
     document.getElementById('roomPort').value = String(47000 + Math.floor(Math.random() * 2000));
-    document.getElementById('roomCols').value = '30';
-    document.getElementById('roomRows').value = '15';
-    document.getElementById('roomMax').value = '2';
+    // 场地 / 人数默认值在 levelDefaults() 里，关卡修改器页面上改
     document.getElementById('myName').value = '玩家' + Math.floor(Math.random() * 90 + 10);
 }
 
@@ -1188,25 +1221,20 @@ async function lanOpenRoom() {
         netLeave();
         netRole = 'host';
 
-        // 场地 / 人数由房主定；服务端会再夹一次范围
-        const clampNum = function (id, lo, hi, dflt) {
-            const n = parseInt(document.getElementById(id).value, 10);
-            return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
-        };
-        roomCfg.cols = clampNum('roomCols', ARENA_MIN_COLS, ARENA_MAX_COLS, 30);
-        roomCfg.rows = clampNum('roomRows', ARENA_MIN_ROWS, ARENA_MAX_ROWS, 15);
-        roomCfg.maxPlayers = clampNum('roomMax', 2, 6, 2);
-        roomCfg.name = document.getElementById('roomName').value.trim();
-        roomCfg.desc = document.getElementById('roomDesc').value.trim();
-        netMaxPlayers = roomCfg.maxPlayers;
+        // 关卡 / 人数 / 房间信息全部来自「关卡修改器」页面（levelCfg），
+        // 这里不再另设一套输入框 —— 两套输入最容易改了一边忘了另一边。服务端会再夹一次范围。
+        levelCfg.cols = Math.max(ARENA_MIN_COLS, Math.min(ARENA_MAX_COLS, levelCfg.cols || 30));
+        levelCfg.rows = Math.max(ARENA_MIN_ROWS, Math.min(ARENA_MAX_ROWS, levelCfg.rows || 15));
+        levelCfg.maxPlayers = Math.max(2, Math.min(6, levelCfg.maxPlayers || 2));
+        netMaxPlayers = levelCfg.maxPlayers;
 
         const made = await lanApi(base, '/api/room', {
-            name: document.getElementById('roomName').value.trim(),
-            desc: document.getElementById('roomDesc').value.trim(),
+            name: levelCfg.name,
+            desc: levelCfg.desc,
             player: document.getElementById('myName').value.trim(),
-            cols: roomCfg.cols,
-            rows: roomCfg.rows,
-            maxPlayers: roomCfg.maxPlayers
+            cols: levelCfg.cols,
+            rows: levelCfg.rows,
+            maxPlayers: levelCfg.maxPlayers
         });
         lanRoom = made.id;
         lanBase = base;

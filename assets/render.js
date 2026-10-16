@@ -20,11 +20,12 @@ function roundRect(x, y, w, h, r) {
     ctx.closePath();
 }
 
-// 逻辑坐标 -> 画布像素（带上放大动画的偏移）
-function pxOf(cx) { return cx * CELL + renderOffsetX; }
-function pyOf(cy) { return cy * CELL + renderOffsetY; }
-function cxOf(p) { return p.x * CELL + renderOffsetX + CELL / 2; }
-function cyOf(p) { return p.y * CELL + renderOffsetY + CELL / 2; }
+// 逻辑坐标 -> 画布像素：减掉摄像机（大地图滚动），再加上放大动画的偏移。
+// 全游戏只有这四个函数做坐标映射，所以摄像机只改这一处就够。
+function pxOf(cx) { return cx * CELL - camX + renderOffsetX; }
+function pyOf(cy) { return cy * CELL - camY + renderOffsetY; }
+function cxOf(p) { return p.x * CELL - camX + renderOffsetX + CELL / 2; }
+function cyOf(p) { return p.y * CELL - camY + renderOffsetY + CELL / 2; }
 
 // HUD 里的玩家条目按人数动态生成 —— 联机可能不止两人
 const hudPlayersEl = document.getElementById('hudPlayers');
@@ -63,7 +64,7 @@ function syncHud() {
     bestEl.textContent = String(best);
     sizeEl.textContent = COLS + '×' + ROWS;
     syncHudPlayers();
-    syncCfgPanel();      // 房间配置面板跟着状态走（客机 = 只读显示主机的配置）
+    if (typeof syncCfgPanel === 'function') syncCfgPanel();   // 关卡修改器页面（level.js 提供）
 }
 
 // 加速剩余时间：整秒向上取整，拾取瞬间显示满 30s
@@ -125,10 +126,26 @@ function buildPath(body, dir, e, retract) {
 }
 
 // ------------------------------ 绘制 ------------------------------
+// 场地矩形（画布坐标）。放大动画期间它表示「已经长到多大」：
+// 左上角固定不动，只有宽高在长 —— 新冒出来的那一圈格子在矩形外面，被裁掉，
+// 这样看起来才是「场地从中间往外长」，而不是「内容整体滑一下」。
+// 动画结束后 drawWorldW/H 就等于 W/H，这个矩形就是整块场地。
+function boardRect() {
+    return { x: -camX, y: -camY, w: boardWorldW(), h: boardWorldH() };
+}
+
 function drawBoard() {
-    // 场地铺满整块画布：放大过程中画布只露出一部分，四周由这一层补上
+    // 视口先清空（世界比视口小的时候，四周露出来的是页面底色）
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+
+    const b = boardRect();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(b.x, b.y, b.w, b.h);
+    ctx.clip();
+
     ctx.fillStyle = COLOR.board;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(b.x, b.y, b.w, b.h);
 
     // 网格线跟着画面一起滑动，放大过程中格子才不会和线错位
     ctx.strokeStyle = COLOR.grid;
@@ -137,19 +154,20 @@ function drawBoard() {
 
     for (let c = 0; c <= COLS; c++) {
         const x = pxOf(c);
-        if (x <= 0 || x >= W) continue;
+        if (x <= b.x || x >= b.x + b.w) continue;
         const lx = Math.round(x) + 0.5;   // +0.5 让 1px 细线落在像素中心
-        ctx.moveTo(lx, 0);
-        ctx.lineTo(lx, H);
+        ctx.moveTo(lx, b.y);
+        ctx.lineTo(lx, b.y + b.h);
     }
     for (let r = 0; r <= ROWS; r++) {
         const y = pyOf(r);
-        if (y <= 0 || y >= H) continue;
+        if (y <= b.y || y >= b.y + b.h) continue;
         const ly = Math.round(y) + 0.5;
-        ctx.moveTo(0, ly);
-        ctx.lineTo(W, ly);
+        ctx.moveTo(b.x, ly);
+        ctx.lineTo(b.x + b.w, ly);
     }
     ctx.stroke();
+    ctx.restore();
 }
 
 function drawApple() {
@@ -173,9 +191,12 @@ function drawApple() {
 
 // 加速道具：蓝色圆底 + 白色闪电
 function drawSpeedItem() {
-    const p = powerUps.speed;
-    if (!p) return;
+    const list = powerList('speed');
+    for (let i = 0; i < list.length; i++) drawSpeedAt(list[i]);
+}
 
+// 画一个加速道具
+function drawSpeedAt(p) {
     const cx = cxOf(p);
     const cy = cyOf(p);
     const r = CELL * 0.34;
@@ -210,9 +231,12 @@ function drawSpeedItem() {
 
 // 拓宽道具：金色圆底 + 四个向外的箭头（正好对应上下左右各拓宽一格）
 function drawWidenItem() {
-    const p = powerUps.widen;
-    if (!p) return;
+    const list = powerList('widen');
+    for (let i = 0; i < list.length; i++) drawWidenAt(list[i]);
+}
 
+// 画一个拓宽道具
+function drawWidenAt(p) {
     const cx = cxOf(p);
     const cy = cyOf(p);
     const r = CELL * 0.34;
@@ -487,7 +511,7 @@ function rgbOf(hex) {
 
 // 部位的颜色直接由剩余血量决定：满血是本色，血越少压得越暗
 function segmentColor(baseHex, hp) {
-    const max = SEGMENT_HP;
+    const max = levelCfg.hp0;
     const h = (hp === undefined) ? max : Math.max(0, Math.min(hp, max));
     let t = (max <= 1) ? 0 : 1 - (h - 1) / (max - 1);   // 满血 0 -> 血见底 1
     t = Math.max(0, Math.min(t, 1));
@@ -539,7 +563,7 @@ function drawDrops() {
 
 function drawOverlay() {
     ctx.fillStyle = COLOR.mask;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);   // 遮罩盖视口，不盖整个世界
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -557,14 +581,14 @@ function drawOverlay() {
         if (alive.length === 1) title = alive[0].def.name + ' 获胜';
         else if (alive.length === 0) title = '平局';
     }
-    ctx.fillText(title, W / 2, H / 2 - 26);
+    ctx.fillText(title, VIEW_W / 2, VIEW_H / 2 - 26);
 
     ctx.font = '15px ' + FONT;
     const parts = [];
     for (let i = 0; i < players.length; i++) {
         parts.push(players[i].def.name + ' ' + players[i].score);
     }
-    ctx.fillText(parts.join('　'), W / 2, H / 2 + 6);
+    ctx.fillText(parts.join('　'), VIEW_W / 2, VIEW_H / 2 + 6);
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
     ctx.font = '12px ' + FONT;
@@ -572,28 +596,110 @@ function drawOverlay() {
         ? (netSpectating()
             ? '观战中 · 等主机重开一局 · 按 Esc 断开'
             : '等主机重开一局（也可以点上面的「请求重开」）· 按 Esc 断开连接')
-        : '按空格 / 回车重新开始 · 按 Esc 回到模式选择', W / 2, H / 2 + 38);
+        : '按空格 / 回车重新开始 · 按 Esc 回到模式选择', VIEW_W / 2, VIEW_H / 2 + 38);
 }
 
 function drawPauseOverlay() {
     ctx.fillStyle = COLOR.mask;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     ctx.fillStyle = COLOR.text;
     ctx.font = 'bold 22px ' + FONT;
-    ctx.fillText('已暂停', W / 2, H / 2 - 16);
+    ctx.fillText('已暂停', VIEW_W / 2, VIEW_H / 2 - 16);
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
     ctx.font = '12px ' + FONT;
-    ctx.fillText('按 P 或点「继续 ▶」回到游戏', W / 2, H / 2 + 22);
+    ctx.fillText('按 P 或点「继续 ▶」回到游戏', VIEW_W / 2, VIEW_H / 2 + 22);
+}
+
+// ------------------------------ 摄像机 ------------------------------
+// 跟谁：联机客机跟自己的座位，其他人跟 P1；本人出局就跟第一个还活着的，
+// 全死了/在菜单里就保持原位不动。
+function cameraFocus() {
+    const mine = mySeatIndex();
+    if (mine >= 0 && players[mine] && players[mine].alive) return players[mine];
+    for (let i = 0; i < players.length; i++) {
+        if (players[i] && players[i].alive) return players[i];
+    }
+    return (players && (players[mine >= 0 ? mine : 0] || players[0])) || null;
+}
+
+let camReady = false;
+let camLastMs = 0;
+
+// 目标 = 焦点蛇头居中，再夹进世界里。按时间做指数平滑（跟帧率无关）。
+function updateCamera() {
+    const now = performance.now();
+    const dt = camLastMs ? Math.min(80, now - camLastMs) : 16;
+    camLastMs = now;
+
+    let tx = camX;
+    let ty = camY;
+    const p = cameraFocus();
+    if (p && p.body && p.body[0]) {
+        tx = p.body[0].x * CELL + CELL / 2 - VIEW_W / 2;
+        ty = p.body[0].y * CELL + CELL / 2 - VIEW_H / 2;
+    }
+    tx = clampCam(tx, boardWorldW(), VIEW_W);
+    ty = clampCam(ty, boardWorldH(), VIEW_H);
+
+    // 第一帧直接就位，否则开局会从左上角飞过去
+    const k = camReady ? (1 - Math.exp(-dt / 110)) : 1;
+    camX = clampCam(camX + (tx - camX) * k, boardWorldW(), VIEW_W);
+    camY = clampCam(camY + (ty - camY) * k, boardWorldH(), VIEW_H);
+    camReady = true;
+}
+
+// 画面之外的敌人 / 其他玩家：在视口边缘点一个小圆点（用各自的颜色）。
+// 大地图上不至于「人跑哪去了都不知道」。
+function drawOffscreenHints() {
+    const M = 10;
+    const marks = [];
+    for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        if (!p.alive || !p.body[0]) continue;
+        marks.push({ x: cxOf(p.body[0]), y: cyOf(p.body[0]), color: p.def.body });
+    }
+    for (let i = 0; i < enemies.length; i++) {
+        const h = enemies[i].body[0];
+        if (!h) continue;
+        marks.push({ x: cxOf(h), y: cyOf(h), color: enemyDef(enemies[i]).head });
+    }
+
+    for (let i = 0; i < marks.length; i++) {
+        const m = marks[i];
+        if (m.x >= 0 && m.x <= VIEW_W && m.y >= 0 && m.y <= VIEW_H) continue;
+        const x = Math.max(M, Math.min(VIEW_W - M, m.x));
+        const y = Math.max(M, Math.min(VIEW_H - M, m.y));
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = m.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.stroke();
+    }
 }
 
 function render() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    updateCamera();
     drawBoard();
+
+    // 场地正在长大的时候，场上的东西一律裁在场地矩形里 ——
+    // 否则新冒出来的那圈格子里的内容会提前出现在还没长到的地方
+    const growing = boardGrowing();
+    if (growing) {
+        const b = boardRect();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(b.x, b.y, b.w, b.h);
+        ctx.clip();
+    }
+
     drawApple();
     drawSpeedItem();
     drawWidenItem();
@@ -604,6 +710,9 @@ function render() {
     drawCorpses();
     drawEnemy();
     for (let i = 0; i < players.length; i++) drawSnake(players[i]);
+    if (growing) ctx.restore();
+
+    drawOffscreenHints();          // 屏幕外的目标给个小圆点，画在遮罩下面
     if (state === 'over') drawOverlay();
     else if (state === 'paused') drawPauseOverlay();
 }
@@ -679,6 +788,8 @@ function mySeatIndex() {
 
 // 身长不够 / 到上限时按钮变灰
 let buildBtnLabels = ['', ''];
+let lastSkin = '';
+
 function syncBuildBtn() {
     // 本地双人才摆出第二个方向键盘（手机上一只手按一个；联机时只有自己那一个）
     const pad2 = document.getElementById('pad2');
@@ -689,6 +800,11 @@ function syncBuildBtn() {
 
     // 手机端两套皮肤：本地双人（两个方向盘并排、按钮缩小一点）和观战
     // （没有可操作的蛇，方向键/建塔/暂停在 CSS 里收起来）
+    const skin = (dual ? 'd' : '') + (netSpectating() ? 's' : '');
+    if (skin !== lastSkin) {           // 操作区高度变了，视口跟着重算
+        lastSkin = skin;
+        updateView();
+    }
     document.body.classList.toggle('dualmode', dual);
     document.body.classList.toggle('spectating', netSpectating());
 
@@ -709,8 +825,8 @@ function syncBuildBtn() {
         // 联机时写「我（P3）」并去掉键位提示 —— 客机那边键位和座位对不上
         const who = dual ? p.def.name : (netRole ? '我（' + p.def.name + '）' : p.def.name);
         const key = (dual || !netRole) ? '[' + p.def.buildKey + ']' : '';
-        const label = who + ' 建塔' + key + ' −' + TURRET_COST +
-            '身长 −' + TURRET_COIN_COST + '币　' + turretCount(p) + '/' + TURRET_MAX;
+        const label = who + ' 建塔' + key + ' −' + levelCfg.turretCost +
+            '身长 −' + levelCfg.turretCoins + '币　' + turretCount(p) + '/' + levelCfg.turretMax;
         if (label !== buildBtnLabels[i]) {
             buildBtnEls[i].textContent = label;
             buildBtnLabels[i] = label;

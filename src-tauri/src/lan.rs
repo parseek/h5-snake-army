@@ -379,8 +379,8 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                     .unwrap_or(dflt)
                     .clamp(lo, hi)
             };
-            let cols = num("cols", 10, 60, 30);
-            let rows = num("rows", 8, 40, 15);
+            let cols = num("cols", 10, 200, 30);
+            let rows = num("rows", 8, 150, 15);
             let max_players = num("maxPlayers", 2, 6, 2);
             let name = take("name", 24, &host);
             let desc = take("desc", 80, "");
