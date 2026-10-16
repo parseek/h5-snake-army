@@ -50,6 +50,11 @@ const MIN_BODY_LEN = 2;         // 蛇身最短长度，砍到比这还短就直
 
 // 拓宽道具
 const WIDEN_STEP = 1;           // 每次拓宽：上下左右各加这么多格
+// 主机在配置面板里能设的场地范围（和信令服务端的夹取范围保持一致）
+const ARENA_MIN_COLS = 10;
+const ARENA_MAX_COLS = 60;
+const ARENA_MIN_ROWS = 8;
+const ARENA_MAX_ROWS = 40;
 const WIDEN_ANIM_MS = 400;      // 场地放大的动画时长，走的也是下面那条缓动曲线
 
 // 敌人蛇：数量随着存活时间和得分越来越多
@@ -186,8 +191,10 @@ let H = ROWS * CELL;
 let renderOffsetX = 0;
 let renderOffsetY = 0;
 let widenStartAt = 0;     // 放大动画的起始时间，0 表示没有动画
-let widenFromCols = 0;    // 放大前的尺寸，用来做插值
+let widenFromCols = 0;    // 缩放前的尺寸，用来做插值
 let widenFromRows = 0;
+let widenShiftX = 0;      // 缩放时内容整体平移了多少格（拓宽道具是 +1，主机改尺寸是 0）
+let widenShiftY = 0;
 
 // ------------------------------ 画布 ------------------------------
 const canvas = document.getElementById('board');
@@ -215,14 +222,16 @@ function resizeCanvas() {
 
 // 放大动画的中间帧：画布尺寸从旧尺寸长到新尺寸，
 // 画面同时从「旧位置」滑到「新位置」，两者共用同一条缓动曲线
+// 泛化成「从 widenFrom* 到当前 COLS/ROWS」的插值：
+// 拓宽道具是「上下左右各加一格 + 内容整体平移一格」，
+// 主机在配置面板里改尺寸是「内容不动、往右下长」（shift 为 0）—— 同一套动画。
 function applyWidenFrame(e) {
-    const add = WIDEN_STEP;
     setCanvasSize(
-        Math.round((widenFromCols + add * 2 * e) * CELL),
-        Math.round((widenFromRows + add * 2 * e) * CELL)
+        Math.round((widenFromCols + (COLS - widenFromCols) * e) * CELL),
+        Math.round((widenFromRows + (ROWS - widenFromRows) * e) * CELL)
     );
-    renderOffsetX = -(1 - e) * add * CELL;
-    renderOffsetY = -(1 - e) * add * CELL;
+    renderOffsetX = -(1 - e) * widenShiftX * CELL;
+    renderOffsetY = -(1 - e) * widenShiftY * CELL;
 }
 
 resizeCanvas();

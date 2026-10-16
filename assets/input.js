@@ -41,6 +41,15 @@ function localBuild() {
 function onKeyDown(ev) {
     const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
 
+    // 焦点在输入框 / 文本域里时，游戏快捷键一律让路 ——
+    // 否则在聊天框里打 w、a、s、d、p 会顺手把蛇拐弯、把局暂停
+    const tgt = ev.target;
+    if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+
+    // C：房间设置；T：聊天。单机 / 联机都能用，所以放在模式判断之前
+    if (key === 'c') { ev.preventDefault(); toggleCfgPanel(); return; }
+    if (key === 't') { ev.preventDefault(); toggleChat(); return; }
+
     // 面板上：1 / 2 直接选模式
     if (state === 'menu') {
         if (!netPanelEl.hidden) return;   // 联机面板上别误触数字键
@@ -122,7 +131,7 @@ function onKeyDown(ev) {
 document.addEventListener('keydown', onKeyDown);
 
 Array.prototype.forEach.call(
-    document.querySelectorAll('.operate .btn'),
+    document.querySelectorAll('.operate .btn[data-dir]'),
     function (btn) {
         btn.addEventListener('click', function () {
             // 客机点屏幕方向键也要发给主机，不然本地是空操作
@@ -155,6 +164,10 @@ for (let i = 0; i < buildBtnEls.length; i++) {
         });
     })(i);
 }
+
+// 房间里也能点开设置 / 聊天（手机上主要靠这两个按钮）
+document.getElementById('cfgBtn').addEventListener('click', function () { toggleCfgPanel(); });
+document.getElementById('chatBtn').addEventListener('click', function () { toggleChat(); });
 
 pauseBtnEl.addEventListener('click', function () {
     if (netRole === 'guest') netAskHost('pause');

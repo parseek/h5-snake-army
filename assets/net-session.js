@@ -48,6 +48,13 @@ function netBroadcastSnapshot(snap) {
     }
 }
 
+// 转发给「除某条连接之外」的所有客机（聊天转发用：谁说的不用再收一遍）
+function netBroadcastOther(except, obj) {
+    for (let i = 0; i < netPeers.length; i++) {
+        if (netPeers[i] !== except) netPeerSend(netPeers[i], obj);
+    }
+}
+
 function netPeerBySeat(seat) {
     for (let i = 0; i < netPeers.length; i++) {
         if (netPeers[i].seat === seat) return netPeers[i];
@@ -141,10 +148,14 @@ function netLeave() {
 
 // ------------------------------ 联机：场地与人数 ------------------------------
 // 房主开房时定的那份；连接码模式没有房间面板，就给一份默认的宽场地
-let netRoomCfg = null;
+// 房间/对局配置：房主开房时填进去，面板里能接着改（都在 state.js 的 roomCfg 那一个对象里）
 
 function netArenaCfg() {
-    return netRoomCfg || { cols: 30, rows: 15, maxPlayers: MAX_PLAYERS };
+    return {
+        cols: roomCfg.cols || 30,
+        rows: roomCfg.rows || 15,
+        maxPlayers: roomCfg.maxPlayers || MAX_PLAYERS
+    };
 }
 
 // 交给 start() 的场地：人数按实际入座数算
@@ -203,7 +214,7 @@ function netBindChannel(dc, peer) {
         if (netConnTimer) { clearTimeout(netConnTimer); netConnTimer = null; }
         netSyncOpen();
         netSetStatus('通道已建立，正在握手…', '');
-        netPeerSend(peer, { t: 'hello', v: APP_VERSION });    // 先对程序版本，再开局
+        netPeerSend(peer, { t: 'hello', v: APP_VERSION, name: chatMyName() });   // 先对版本，再开局
     });
     dc.addEventListener('close', function () {
         if (netRole === 'host') {
@@ -235,6 +246,7 @@ function netOnMessage(raw, peer) {
         hideStartUi();
         if (netRole === 'host') {
             if (peer.seat === null || peer.seat === undefined) peer.seat = netTakeSeat();
+            peer.name = String(m.name || '').slice(0, 16);   // 聊天时显示这个名字
             // 先告诉对方它坐哪儿，再动对局
             netPeerSend(peer, {
                 t: 'welcome', seat: peer.seat, v: APP_VERSION,
@@ -263,11 +275,20 @@ function netOnMessage(raw, peer) {
 
     if (netRole === 'guest') {
         if (m.t === 'state') netApplySnapshot(m);
+        else if (m.t === 'chat') chatPush(m.name || '主机', m.text, false);
         else if (m.t === 'askOk') {
             netBarNote(m.ok
                 ? (m.what === 'restart' ? '主机同意重开' : '主机同意暂停 / 继续')
                 : '主机忽略了你的请求');
         }
+        return;
+    }
+
+    // 主机：聊天要放在下面那道「座位 > 0」的闸之前 —— 观战席也该能说话
+    if (m.t === 'chat') {
+        const nm = peer.name || (peer.seat > 0 ? '座位 ' + peer.seat : '观战');
+        chatPush(nm, m.text, false);
+        netBroadcastOther(peer, { t: 'chat', seat: peer.seat, name: nm, text: m.text });
         return;
     }
 
@@ -512,6 +533,17 @@ function netSnapshot() {
         wid: widenStartAt ? Math.round(widenStartAt) : 0,
         wfc: widenFromCols, wfr: widenFromRows,
         mode: mode, team: teamMode, best: best,
+        // 房间配置：客机只读，面板上照着显示（cols/rows 是「初始尺寸」，
+        // 场上的实时尺寸另有 cols/rows 字段，别看混了）
+        cfg: {
+            cols: roomCfg.cols || COLS,
+            rows: roomCfg.rows || ROWS,
+            team: teamMode,
+            enemies: roomCfg.enemies,
+            powerups: roomCfg.powerups,
+            name: roomCfg.name,
+            desc: roomCfg.desc
+        },
         pl: players.map(function (p, i) {
             return {
                 i: i,
@@ -564,6 +596,15 @@ function netApplySnapshot(m) {
     if (typeof m.you === 'number') netSeat = m.you;   // 主机告诉我坐哪儿（< 0 = 观战）
     mode = m.mode;
     teamMode = m.team;
+    if (m.cfg) {                       // 房间配置：客机只照着显示，不生效（逻辑都在主机那边跑）
+        roomCfg.cols = m.cfg.cols || 0;
+        roomCfg.rows = m.cfg.rows || 0;
+        roomCfg.team = m.cfg.team || teamMode;
+        roomCfg.enemies = m.cfg.enemies !== false;
+        roomCfg.powerups = m.cfg.powerups !== false;
+        roomCfg.name = m.cfg.name || '';
+        roomCfg.desc = m.cfg.desc || '';
+    }
     best = m.best;
 
     if (COLS !== m.cols || ROWS !== m.rows || W !== m.w || H !== m.h) {
@@ -622,6 +663,210 @@ function netApplySnapshot(m) {
     syncHud();
     syncNetBar();     // 客机的状态条要跟着主机的状态走
     if (!netPanelEl.hidden || !startPanelEl.hidden) hideStartUi();
+}
+
+// ------------------------------ 房间配置面板 ------------------------------
+// 主机说了算：地图初始大小、合作/竞争、敌人、道具、房间名与描述。
+// 本地单人 / 本地双人一样能改（那时「主机」就是你自己）；客机只读。
+// 改完立即生效：模式类当场换，场地变大当场扩，变小会按新尺寸重开一局。
+let cfgOpen = false;
+let cfgResume = false;     // 进面板前是不是在跑，关掉时恢复
+
+function cfgNote(text) {
+    const el = document.getElementById('cfgNote');
+    if (el) el.textContent = text || "";
+}
+
+// 面板同步：按角色决定可改还是只读，并把当前值刷上去
+function syncCfgPanel() {
+    const panel = document.getElementById('cfgPanel');
+    if (!panel) return;
+    const isGuest = netRole === 'guest';
+    const cols = roomCfg.cols || COLS;
+    const rows = roomCfg.rows || ROWS;
+    const setVal = function (id, v) {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el && el.value !== String(v)) el.value = v;
+    };
+    setVal('cfgCols', cols);
+    setVal('cfgRows', rows);
+    setVal('cfgName', roomCfg.name || '');
+    setVal('cfgDesc', roomCfg.desc || '');
+    for (const id of ['cfgCols', 'cfgRows', 'cfgName', 'cfgDesc']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = isGuest;
+    }
+    const pair = [
+        ['cfgCoop', 'coop', teamMode === 'coop'],
+        ['cfgVs', 'vs', teamMode === 'vs'],
+        ['cfgEnemies', null, roomCfg.enemies],
+        ['cfgPowerups', null, roomCfg.powerups]
+    ];
+    for (const [id, , on] of pair) {
+        const b = document.getElementById(id);
+        if (!b) continue;
+        b.classList.toggle('is-on', !!on);
+        b.disabled = isGuest;
+    }
+    const en = document.getElementById('cfgEnemies');
+    if (en) en.textContent = roomCfg.enemies ? '敌人：开' : '敌人：关';
+    const pw = document.getElementById('cfgPowerups');
+    if (pw) pw.textContent = roomCfg.powerups ? '道具：开' : '道具：关';
+    const who = document.getElementById('cfgWho');
+    if (who) {
+        who.textContent = isGuest ? '配置由主机控制（这边只读）'
+            : '你是主机：改完立即生效（本地模式也一样）';
+    }
+}
+
+// 面板上改一项：合到当前配置里再应用
+function setCfg(patch) {
+    if (netRole === 'guest') return;              // 客机没有修改权
+    const next = {
+        cols: roomCfg.cols || COLS,
+        rows: roomCfg.rows || ROWS,
+        team: roomCfg.team,
+        enemies: roomCfg.enemies,
+        powerups: roomCfg.powerups
+    };
+    for (const k in patch) next[k] = patch[k];
+    const res = applyRoomCfg(next, gameNow);
+    if (res === 'restart') cfgNote('场地变小了 —— 已按 ' + COLS + '×' + ROWS + ' 重开一局');
+    else if (res === 'grew') cfgNote('场地已扩到 ' + COLS + '×' + ROWS);
+    else cfgNote("");
+    syncCfgPanel();
+    syncHud();
+    syncNetBar();
+}
+
+function toggleCfgPanel(open) {
+    const panel = document.getElementById('cfgPanel');
+    if (!panel) return;
+    const want = (open === undefined) ? panel.hidden : !!open;
+    if (want === cfgOpen) return;
+    panel.hidden = !want;
+    cfgOpen = want;
+    if (want) {
+        if (netRole !== 'guest' && state === 'running') {   // 改配置时先把局停下来
+            cfgResume = true;
+            togglePause();
+        }
+        cfgNote("");
+        syncCfgPanel();
+    } else if (cfgResume) {
+        cfgResume = false;
+        if (state === 'paused') togglePause();
+    }
+}
+
+// ------------------------------ 文字聊天 ------------------------------
+// 主机转发：客机 -> 主机 -> 其他所有人；主机自己说的直接广播。
+// 单机（没联机）时消息只留在自己屏幕上，输入框照样能用。
+const CHAT_MAX = 200;      // 单条长度上限
+const CHAT_KEEP = 100;     // 本地最多留多少条
+
+function chatMyName() {
+    const box = document.getElementById('myName');
+    const n = box ? String(box.value || '').trim() : '';
+    if (n) return n.slice(0, 16);
+    if (netRole === null) return '本地';
+    return netRole === 'host' ? '主机' : '客机';
+}
+
+function chatPush(name, text, me) {
+    text = String(text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, CHAT_MAX);
+    if (!text) return;
+    chatLog.push({ me: !!me, name: String(name || '?').slice(0, 16), text: text, at: Date.now() });
+    while (chatLog.length > CHAT_KEEP) chatLog.shift();
+    if (!chatOpen) chatUnread++;
+    renderChat();
+}
+
+function chatSend() {
+    const input = document.getElementById('chatInput');
+    if (!input) return;
+    const text = String(input.value || '').trim().slice(0, CHAT_MAX);
+    if (!text) return;
+    input.value = '';
+    const me = chatMyName();
+    chatPush(me, text, true);
+    if (!netOpen) return;                       // 单机：只显示在自己屏幕上
+    if (netRole === 'host') netBroadcast({ t: 'chat', seat: 0, name: me, text: text });
+    else netSend({ t: 'chat', text: text });
+}
+
+function toggleChat(open) {
+    const bar = document.getElementById('chatBar');
+    if (!bar) return;
+    chatOpen = (open === undefined) ? bar.hidden : !!open;
+    bar.hidden = !chatOpen;
+    if (chatOpen) {
+        chatUnread = 0;
+        const input = document.getElementById('chatInput');
+        if (input) setTimeout(function () { input.focus(); }, 0);
+    }
+    renderChat();
+}
+
+function renderChat() {
+    const bar = document.getElementById('chatBar');
+    const list = document.getElementById('chatList');
+    const btn = document.getElementById('chatBtn');
+    if (!bar || !list) return;
+    bar.hidden = !chatOpen;
+    if (btn) {
+        btn.textContent = chatUnread ? '\uD83D\uDCAC ' + chatUnread : '\uD83D\uDCAC';
+        btn.classList.toggle('has-new', chatUnread > 0);
+    }
+    if (!chatOpen) return;
+    if (list.childElementCount !== chatLog.length) {
+        list.innerHTML = '';
+        for (let i = 0; i < chatLog.length; i++) {
+            const m = chatLog[i];
+            const row = document.createElement('div');
+            row.className = 'chatRow' + (m.me ? ' me' : '');
+            const who = document.createElement('b');
+            who.textContent = m.name + '：';
+            const txt = document.createElement('span');
+            txt.textContent = m.text;          // 永远走 textContent：消息不是 HTML
+            row.appendChild(who);
+            row.appendChild(txt);
+            list.appendChild(row);
+        }
+        list.scrollTop = list.scrollHeight;
+    }
+}
+
+// 面板 / 聊天的按钮接线（本地和联机都要能用）
+if (document.getElementById('cfgCoop')) {
+    document.getElementById('cfgCoop').addEventListener('click', function () { setCfg({ team: 'coop' }); });
+    document.getElementById('cfgVs').addEventListener('click', function () { setCfg({ team: 'vs' }); });
+    document.getElementById('cfgEnemies').addEventListener('click', function () { setCfg({ enemies: !roomCfg.enemies }); });
+    document.getElementById('cfgPowerups').addEventListener('click', function () { setCfg({ powerups: !roomCfg.powerups }); });
+    document.getElementById('cfgCloseBtn').addEventListener('click', function () { toggleCfgPanel(false); });
+    for (const id of ['cfgCols', 'cfgRows']) {
+        document.getElementById(id).addEventListener('change', function () {
+            setCfg({
+                cols: parseInt(document.getElementById('cfgCols').value, 10),
+                rows: parseInt(document.getElementById('cfgRows').value, 10)
+            });
+        });
+    }
+    document.getElementById('cfgName').addEventListener('input', function () {
+        if (netRole !== 'guest') roomCfg.name = this.value.trim().slice(0, 24);
+    });
+    document.getElementById('cfgDesc').addEventListener('input', function () {
+        if (netRole !== 'guest') roomCfg.desc = this.value.trim().slice(0, 80);
+    });
+}
+if (document.getElementById('chatBtn')) {
+    document.getElementById('chatBtn').addEventListener('click', function () { toggleChat(); });
+    document.getElementById('chatCloseBtn').addEventListener('click', function () { toggleChat(false); });
+    document.getElementById('chatSendBtn').addEventListener('click', chatSend);
+    document.getElementById('chatInput').addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); chatSend(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); toggleChat(false); }
+    });
 }
 
 // ------------------------------ 局域网房间 ------------------------------
@@ -948,20 +1193,20 @@ async function lanOpenRoom() {
             const n = parseInt(document.getElementById(id).value, 10);
             return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
         };
-        netRoomCfg = {
-            cols: clampNum('roomCols', 10, 60, 30),
-            rows: clampNum('roomRows', 8, 40, 15),
-            maxPlayers: clampNum('roomMax', 2, 6, 2)
-        };
-        netMaxPlayers = netRoomCfg.maxPlayers;
+        roomCfg.cols = clampNum('roomCols', ARENA_MIN_COLS, ARENA_MAX_COLS, 30);
+        roomCfg.rows = clampNum('roomRows', ARENA_MIN_ROWS, ARENA_MAX_ROWS, 15);
+        roomCfg.maxPlayers = clampNum('roomMax', 2, 6, 2);
+        roomCfg.name = document.getElementById('roomName').value.trim();
+        roomCfg.desc = document.getElementById('roomDesc').value.trim();
+        netMaxPlayers = roomCfg.maxPlayers;
 
         const made = await lanApi(base, '/api/room', {
             name: document.getElementById('roomName').value.trim(),
             desc: document.getElementById('roomDesc').value.trim(),
             player: document.getElementById('myName').value.trim(),
-            cols: netRoomCfg.cols,
-            rows: netRoomCfg.rows,
-            maxPlayers: netRoomCfg.maxPlayers
+            cols: roomCfg.cols,
+            rows: roomCfg.rows,
+            maxPlayers: roomCfg.maxPlayers
         });
         lanRoom = made.id;
         lanBase = base;

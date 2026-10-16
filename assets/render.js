@@ -63,6 +63,7 @@ function syncHud() {
     bestEl.textContent = String(best);
     sizeEl.textContent = COLS + '×' + ROWS;
     syncHudPlayers();
+    syncCfgPanel();      // 房间配置面板跟着状态走（客机 = 只读显示主机的配置）
 }
 
 // 加速剩余时间：整秒向上取整，拾取瞬间显示满 30s

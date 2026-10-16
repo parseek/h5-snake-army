@@ -337,6 +337,16 @@ function phase4(w) {
     step('code-carries-ip', function () { return ev(w, 'var c1 = netEncode("v=0 x", "offer", "192.168.1.23"); var c2 = netEncode("v=0 x", "offer"); netDecode(c1, "offer").ip + "/" + netDecode(c2, "offer").ip + " 段数 " + c1.split("#").length + "/" + c2.split("#").length'); });
     step('patch-unmasks-mdns', function () { return ev(w, 'window.__added = []; var fake = { remoteDescription: { sdp: "a=candidate:1 1 udp 2113 abc.local 50000 typ host" + String.fromCharCode(13,10) + "a=candidate:2 1 udp 2113 10.0.0.9 50001 typ host" }, addIceCandidate: function (c) { window.__added.push(c.candidate); return Promise.resolve(); } }; netPatchIp(fake, "192.168.1.23") + " 条 => " + window.__added.join(" ; ")'); });
 
+    // 房间配置（主机实时改）+ 聊天
+    step('cfg-live-team-enemies', function () { return ev(w, 'start(1); setCfg({ team: "vs", enemies: false, powerups: false }); teamMode + "/" + roomCfg.enemies + "/" + enemies.length + "/" + String(powerUps.speed) + "/" + spawnEnemy(gameNow)'); });
+    step('cfg-live-grow', function () { return ev(w, 'start(1); var h0 = JSON.stringify(players[0].body[0]); setCfg({ cols: COLS + 4, rows: ROWS + 2 }); COLS + "x" + ROWS + "/" + (JSON.stringify(players[0].body[0]) === h0)'); });
+    step('cfg-shrink-restarts', function () { return ev(w, 'setArenaSize(10, 8, gameNow) + "/" + COLS + "x" + ROWS'); });
+    step('cfg-next-round-keeps-size', function () { return ev(w, 'setCfg({ enemies: true, powerups: true }); start(1); COLS + "x" + ROWS + "/" + roomCfg.cols'); });
+    step('cfg-guest-readonly', function () { return ev(w, 'netRole = "guest"; syncCfgPanel(); document.getElementById("cfgCols").disabled + "/" + document.getElementById("cfgCols").value'); });
+    step('chat-relay', function () { return ev(w, 'window.__sent = []; function mk(s) { return { seat: s, open: true, pc: null, name: "小王", dc: { send: function (x) { window.__sent.push(x); } } }; } netRole = "host"; netPeers = [mk(1), mk(2)]; netOnMessage(JSON.stringify({ t: "chat", text: "hi" }), netPeers[0]); window.__sent.length + "/" + JSON.parse(window.__sent[0]).name + "/" + chatLog[chatLog.length - 1].text'); });
+    step('chat-input-guard', function () { return ev(w, 'netLeave(); start(1); var q0 = players[0].queue.length; document.getElementById("chatInput").dispatchEvent(new KeyboardEvent("keydown", { key: "w", bubbles: true })); players[0].queue.length - q0'); });
+    step('chat-html-safe', function () { return ev(w, 'chatLog.length = 0; toggleChat(true); chatPush("坏", "<img src=x onerror=1>", false); var row = document.getElementById("chatList").lastChild; row.querySelectorAll("img").length + "/" + (row.innerHTML.indexOf("&lt;img") >= 0)'); });
+
     report.phases.seats = {
         maxPlayers: ev(w, 'MAX_PLAYERS'),
         wanted: ev(w, 'netWantedPlayers()'),

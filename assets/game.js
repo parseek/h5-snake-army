@@ -133,63 +133,139 @@ function nearestApple(p) {
 }
 
 function spawnPowerUp(kind) {
+    if (!roomCfg.powerups) return;                 // 主机关了道具就不再刷
     if (kind === 'widen' && !canWiden()) return;   // 到上限就不再出现
     powerUps[kind] = pickCell(freeCells());
 }
 
-// 吃下拓宽道具：上下左右各加一格。逻辑坐标一次性改好，
-// 画面变化交给 applyWidenFrame 做缓入缓出
-function widenField(now) {
-    if (!canWiden()) return;
-
-    const add = WIDEN_STEP;
-    widenFromCols = COLS;
-    widenFromRows = ROWS;
-
-    COLS += add * 2;
-    ROWS += add * 2;
-
-    // 左边、上面各多了一格，所以已有坐标统一 +add
+// 把场上所有坐标平移 (dx, dy) 格。
+// 拓宽道具（整块场地往左上长）和「主机改场地尺寸」都走这里。
+function shiftWorld(dx, dy) {
+    if (!dx && !dy) return;
     for (let i = 0; i < players.length; i++) {
         const b = players[i].body;
         for (let k = 0; k < b.length; k++) {
-            b[k].x += add;
-            b[k].y += add;
+            b[k].x += dx;
+            b[k].y += dy;
         }
     }
     for (let i = 0; i < apples.length; i++) {
-        apples[i].x += add;
-        apples[i].y += add;
+        apples[i].x += dx;
+        apples[i].y += dy;
     }
     for (let i = 0; i < POWER_KINDS.length; i++) {
         const p = powerUps[POWER_KINDS[i]];
         if (p) {
-            p.x += add;
-            p.y += add;
+            p.x += dx;
+            p.y += dy;
         }
     }
     for (let e = 0; e < enemies.length; e++) {
         const body = enemies[e].body;
-        for (let i = 0; i < body.length; i++) {
-            body[i].x += add;
-            body[i].y += add;
+        for (let k = 0; k < body.length; k++) {
+            body[k].x += dx;
+            body[k].y += dy;
         }
     }
     for (let i = 0; i < turrets.length; i++) {
-        turrets[i].x += add;
-        turrets[i].y += add;
+        turrets[i].x += dx;
+        turrets[i].y += dy;
     }
     for (let i = 0; i < drops.length; i++) {
-        drops[i].x += add;
-        drops[i].y += add;
+        drops[i].x += dx;
+        drops[i].y += dy;
     }
     for (let i = 0; i < bullets.length; i++) {
-        bullets[i].x += add;
-        bullets[i].y += add;
+        bullets[i].x += dx;
+        bullets[i].y += dy;
+    }
+    if (reviveItem) {
+        reviveItem.x += dx;
+        reviveItem.y += dy;
+    }
+    for (let i = 0; i < corpses.length; i++) {
+        const b = corpses[i].body;
+        for (let k = 0; k < b.length; k++) {
+            b[k].x += dx;
+            b[k].y += dy;
+        }
+    }
+}
+
+// 把场地改成 cols x rows：内容按 (dx, dy) 平移，画面变化交给 applyWidenFrame 缓入缓出
+function beginResize(cols, rows, dx, dy, now) {
+    widenFromCols = COLS;
+    widenFromRows = ROWS;
+    widenShiftX = dx;
+    widenShiftY = dy;
+    COLS = cols;
+    ROWS = rows;
+    shiftWorld(dx, dy);
+    widenStartAt = now || gameNow || 1;   // 由主循环逐帧推进动画
+    syncHud();
+}
+
+// 吃下拓宽道具：上下左右各加一格
+function widenField(now) {
+    if (!canWiden()) return;
+    const add = WIDEN_STEP;
+    beginResize(COLS + add * 2, ROWS + add * 2, add, add, now);
+}
+
+// 主机在配置面板里改场地尺寸：
+//   变大 -> 当场扩（内容不动、往右下长，走同一套缓动）
+//   变小 -> 只能按新尺寸重开一局（会把蛇压到界外，没有优雅的处理办法）
+// 返回 'same' | 'grew' | 'restart'
+function setArenaSize(cols, rows, now) {
+    cols = Math.max(ARENA_MIN_COLS, Math.min(ARENA_MAX_COLS, Math.round(cols) || COLS));
+    rows = Math.max(ARENA_MIN_ROWS, Math.min(ARENA_MAX_ROWS, Math.round(rows) || ROWS));
+    if (cols === COLS && rows === ROWS) return 'same';
+
+    roomCfg.cols = cols;
+    roomCfg.rows = rows;
+    START_COLS = cols;
+    START_ROWS = rows;
+    MAX_COLS = Math.max(cols + 10, MAX_COLS);
+    MAX_ROWS = Math.max(rows + 10, MAX_ROWS);
+
+    if (cols < COLS || rows < ROWS) {
+        reset();              // 缩小：按新尺寸重开，免得把蛇留在界外
+        return 'restart';
+    }
+    beginResize(cols, rows, 0, 0, now);
+    return 'grew';
+}
+
+// 主机改了配置：能当场生效的当场生效，场地缩小这种只能重开
+// 返回 setArenaSize 的结果，UI 拿它决定提示什么
+function applyRoomCfg(cfg, now) {
+    if (!cfg) return 'same';
+
+    if (TEAM_MODES[cfg.team]) teamMode = cfg.team;
+    roomCfg.team = teamMode;
+
+    const wantEnemies = cfg.enemies !== false;
+    if (roomCfg.enemies !== wantEnemies) {
+        roomCfg.enemies = wantEnemies;
+        if (!wantEnemies) {
+            enemies = [];        // 关掉就当场清场，别留着继续追人
+            enemyRespawns = [];
+        }
     }
 
-    widenStartAt = now;   // 由主循环逐帧推进动画
-    syncHud();
+    const wantPowerups = cfg.powerups !== false;
+    if (roomCfg.powerups !== wantPowerups) {
+        roomCfg.powerups = wantPowerups;
+        if (!wantPowerups) {
+            powerUps = { speed: null, widen: null };
+            powerRespawnAt = { speed: 0, widen: 0 };
+        }
+    }
+
+    if (typeof cfg.cols === 'number' && typeof cfg.rows === 'number') {
+        return setArenaSize(cfg.cols, cfg.rows, now);
+    }
+    return 'ok';
 }
 
 // 造第 i 号玩家（0 = 主机 / P1）：左右两侧轮流，同一侧再按序号上下错开。
@@ -280,11 +356,25 @@ function syncPlayingClass() {
 function start(m, tm, arena) {
     if (MODES[m]) mode = m;
     if (TEAM_MODES[tm]) teamMode = tm;
-    // arena 由联机房主给出：{ cols, rows, count }；本地模式不传
-    netArena = arena || null;
+    roomCfg.team = teamMode;      // 面板上显示的、以及发给客机的，都是这一份
+
+    // arena 由联机房主给出：{ cols, rows, count }；本地模式不传。
+    // 主机在配置面板里改过尺寸（roomCfg.cols/rows）的话，本地开局也照那个来 ——
+    // 否则「改完场地尺寸，重开一局又变回去了」。
     const def = MODES[mode];
-    START_COLS = (arena && arena.cols) || def.cols;
-    START_ROWS = (arena && arena.rows) || def.rows;
+    const useCols = (arena && arena.cols) || roomCfg.cols || def.cols;
+    const useRows = (arena && arena.rows) || roomCfg.rows || def.rows;
+    netArena = (arena || (roomCfg.cols && roomCfg.rows))
+        ? {
+            cols: useCols,
+            rows: useRows,
+            maxPlayers: (arena && arena.maxPlayers) || roomCfg.maxPlayers,
+            count: (arena && arena.count) || def.count
+        }
+        : null;
+
+    START_COLS = useCols;
+    START_ROWS = useRows;
     MAX_COLS = (arena && arena.maxCols) || Math.max(def.maxCols, START_COLS + 10);
     MAX_ROWS = (arena && arena.maxRows) || Math.max(def.maxRows, START_ROWS + 10);
 
@@ -774,6 +864,7 @@ function pickEnemyKind(now) {
 }
 
 function spawnEnemy(now) {
+    if (!roomCfg.enemies) return false;            // 主机关了敌人就不再刷
     const kind = pickEnemyKind(now);
     const def = ENEMY_KINDS[kind];
 
@@ -912,6 +1003,7 @@ function setEnemyStepMs(en, next) {
 
 // 到期的补位 + 难度上来了就补新蛇
 function updateEnemySpawns(now) {
+    if (!roomCfg.enemies) return;
     for (let i = enemyRespawns.length - 1; i >= 0; i--) {
         if (now < enemyRespawns[i]) continue;
         enemyRespawns.splice(i, 1);

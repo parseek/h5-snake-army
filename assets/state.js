@@ -44,6 +44,26 @@ let netOpen = false;      // 客机：通道通了；主机：至少一条通了
 let netLastSend = 0;
 let netBusy = false;
 let netConnTimer = null;
+
+// ------------------------------ 房间 / 对局配置 ------------------------------
+// 主机说了算的一份配置，改完立即生效；客机只读（跟着快照同步）。
+// 打包成一个对象：以前「场地由房主定」散在 start()/reset()/lanOpenRoom 各处各读一份，
+// 加一个开关要改三处。maxPlayers 不参与实时修改 —— 它决定开房那一刻发几张座位。
+let roomCfg = {
+    cols: 0,          // 0 = 用当前模式的默认场地
+    rows: 0,
+    maxPlayers: 2,    // 只在开房 / 开局那一刻用
+    team: 'coop',     // 'coop' | 'vs'
+    enemies: true,    // 刷不刷敌人
+    powerups: true,   // 刷不刷道具
+    name: "",         // 房间信息（面板里能改，客机看得见）
+    desc: ""
+};
+
+// ------------------------------ 聊天 ------------------------------
+let chatLog = [];       // [{ me, name, text, at }]，只留最近 100 条
+let chatUnread = 0;
+let chatOpen = false;
 let reviveItem;          // 合作模式的复活道具 { x, y }，没有则 null
 let apples;         // 场上的苹果 [{ x, y }, ...]
 let powerUps;       // { speed: {x,y}|null, widen: {x,y}|null }

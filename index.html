@@ -525,6 +525,78 @@
             width: 100%;
         }
 
+        /* 「设置 / 聊天」两个半宽按钮 */
+        .operate .duo {
+            display: flex;
+            gap: 6px;
+            width: 100%;
+        }
+
+        .operate .duo .btn {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        /* 聊天：贴底的抽屉（在 .start 浮层之下，那层 z-index 是 50） */
+        .chatbar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+            background: rgba(20, 22, 28, 0.94);
+            color: #fff;
+            font-size: 13px;
+            box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.28);
+        }
+
+        .chatbar[hidden] {
+            display: none;
+        }
+
+        .chatList {
+            max-height: 34vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .chatRow {
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        .chatRow.me {
+            color: #9fe8a0;
+        }
+
+        .chatInputRow {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .chatInput {
+            flex: 1;
+            min-width: 0;
+            padding: 7px 8px;
+            font: inherit;
+            font-size: 16px;   /* 手机上小于 16px 会让 iOS 一聚焦就放大整页 */
+            color: #222;
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 6px;
+        }
+
+        #chatBtn.has-new {
+            background: rgba(255, 210, 31, 0.35);
+        }
+
         .desc {
             margin: 0;
             max-width: 320px;
@@ -665,6 +737,30 @@
                 <div class="tip" id="verLine"></div>
             </div>
 
+            <!-- 房间设置：主机说了算，本地单人/双人一样能改；客机只读 -->
+            <div class="start" id="cfgPanel" hidden>
+                <div class="title">⚙ 房间设置</div>
+                <div class="tip" id="cfgWho"></div>
+                <div class="tip">下面两项是<b>调试用</b>的：实时改场地大小 —— 变大当场扩，变小按新尺寸重开一局。</div>
+                <div class="row">
+                    <label class="field"><span>场地宽</span>
+                        <input id="cfgCols" class="netIce portInput" type="number" min="10" max="60" /></label>
+                    <label class="field"><span>场地高</span>
+                        <input id="cfgRows" class="netIce portInput" type="number" min="8" max="40" /></label>
+                </div>
+                <div class="row">
+                    <button class="startBtn small" id="cfgCoop">合作</button>
+                    <button class="startBtn small" id="cfgVs">竞争</button>
+                    <button class="startBtn small" id="cfgEnemies">敌人：开</button>
+                    <button class="startBtn small" id="cfgPowerups">道具：开</button>
+                </div>
+                <input id="cfgName" class="netIce" spellcheck="false" placeholder="房间名（游戏里给对方看）" />
+                <input id="cfgDesc" class="netIce" spellcheck="false" placeholder="房间描述" />
+                <div class="tip" id="cfgNote"></div>
+                <div class="tip">场地变大是<b>当场扩</b>（内容留在原地往右下长）；变小会按新尺寸重开一局。</div>
+                <button class="startBtn" id="cfgCloseBtn">返回游戏</button>
+            </div>
+
             <div class="start" id="netPanel" hidden>
                 <div class="title">联机对战</div>
                 <div class="sub" id="netStatus">先选角色：主机负责开局，客机负责应答</div>
@@ -796,6 +892,10 @@
                 <div class="btn" data-dir="right">右</div>
                 <div class="btn build flex" id="buildBtn0">P1 建塔 · 身长 −2</div>
                 <div class="btn pause flex" id="pauseBtn">暂停</div>
+                <div class="duo">
+                    <div class="btn" id="cfgBtn">⚙ 设置</div>
+                    <div class="btn" id="chatBtn">💬</div>
+                </div>
             </div>
             <!-- P2 的方向键：只在「本地双人」时出现；手机上两人各按各的 -->
             <div class="operate" id="pad2" hidden>
@@ -804,6 +904,16 @@
                 <div class="btn" data-dir2="down">下</div>
                 <div class="btn" data-dir2="right">右</div>
                 <div class="btn build flex" id="buildBtn1">P2 建塔 · 身长 −2</div>
+            </div>
+        </div>
+
+        <div class="chatbar" id="chatBar" hidden>
+            <div class="chatList" id="chatList"></div>
+            <div class="chatInputRow">
+                <input id="chatInput" class="chatInput" spellcheck="false" maxlength="200"
+                       placeholder="说点什么…（回车发送，Esc 收起）" />
+                <button class="miniBtn ok" id="chatSendBtn">发送</button>
+                <button class="miniBtn" id="chatCloseBtn">收起</button>
             </div>
         </div>
 
@@ -822,7 +932,9 @@
             它阵亡后身体会原地掉成一地战利品：绿色 + 加身长，金币 + 加货币；
             P1 按 / 、P2 按 Q（或点各自的「建塔」）消耗 2 节身长 + 1 货币，可原地造一座自动开火的炮塔；
             两位玩家的得分 / 货币 / 炮塔各自独立，撞到对方身体同样会出局，一位出局另一位继续玩；
-            按 P（或点「暂停」）可随时暂停，暂停期间所有计时都会一起停住。
+            按 P（或点「暂停」）可随时暂停，暂停期间所有计时都会一起停住；
+            按 C（或点「⚙ 设置」）打开房间设置 —— 主机随时切合作/竞争、开关敌人与道具、
+            改房间名，场地大小那两项算调试用；按 T（或点「💬」）和房间里的人文字聊天。
         </p>
     </main>
 
