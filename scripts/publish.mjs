@@ -23,6 +23,10 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 
+// 版本号只从 package.json 读（用 npm run bump <x.y.z> 统一改），
+// 这样收尾时列出的 zip 名字不会因为升版本而对不上
+const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+
 function flag(name) { return args.includes(name); }
 function opt(name) {
     const i = args.indexOf(name);
@@ -220,7 +224,7 @@ async function main() {
     banner('5/5 结果');
     console.log('  提交: ' + (capture('git', ['rev-parse', '--short', 'HEAD']) || '(没变)'));
     console.log('  远端: ' + (targets.length ? targets.join(' / ') : '(没推)') + (warned ? ' —— 有失败的，看上面' : ''));
-    for (const f of ['src-tauri/target/release/snake-army.exe', 'release/snake-army-0.1.0-win-x64.zip']) {
+    for (const f of ['src-tauri/target/release/snake-army.exe', 'release/snake-army-' + version + '-win-x64.zip']) {
         const p = join(root, f);
         if (existsSync(p)) console.log('  ' + f + '  ' + human(statSync(p).size));
     }

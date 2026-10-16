@@ -860,6 +860,8 @@ function syncPauseBtn() {
         pauseBtnLabel = label;
     }
     pauseBtnEl.classList.toggle('is-off', state !== 'running' && state !== 'paused');
+    // 菜单上不该出现「暂停」——那里只有「本地 / 开启房间」两个会开局的按钮
+    pauseBtnEl.hidden = (state === 'menu');
 }
 
 // 「我」控制的是哪条蛇：联机客机是主机分配的座位（可能 >0），

@@ -1,7 +1,7 @@
 {
   "name": "snake-army",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "贪吃蛇 · Canvas 版，用 Tauri 打包成桌面程序；前端本身仍是纯静态页面",
   "scripts": {
     "sync": "node scripts/sync-web.mjs",
@@ -11,6 +11,7 @@
     "pack": "node scripts/pack-exe.mjs",
     "pack:release": "node scripts/pack-release.mjs",
     "pack:netlify": "node scripts/pack-netlify.mjs",
+    "bump": "node scripts/version.mjs",
     "dev": "tauri dev",
     "build:exe": "tauri build --no-bundle && node scripts/pack-exe.mjs",
     "build": "node scripts/fetch-easytier.mjs && npm run build:exe && node scripts/pack-release.mjs"

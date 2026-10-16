@@ -168,6 +168,8 @@ function wireLevelPage() {
     if (b1) b1.addEventListener('click', function () { toggleCfgPanel(true); });
     const b2 = document.getElementById('levelBtnNet');
     if (b2) b2.addEventListener('click', function () { toggleCfgPanel(true); });
+    const b3 = document.getElementById('netMaxPlayersBtn');
+    if (b3) b3.addEventListener('click', function () { tapFeedback(); cycleMaxPlayers(); });
 }
 
 // 页面同步：值 / 禁用状态 / 按钮文字都刷一遍（syncHud 每次都调它）
@@ -175,6 +177,7 @@ function syncCfgPanel() {
     const panel = document.getElementById('cfgPanel');
     if (!panel) return;
     const isGuest = netRole === 'guest';
+    syncRoomSettings();      // 联机面板里的房间摘要 / 人数上限也跟着刷
 
     for (let i = 0; i < LEVEL_FIELDS.length; i++) {
         const f = LEVEL_FIELDS[i];
@@ -274,6 +277,9 @@ function restartLevel() {
 }
 
 // 打开 / 关闭。打开时把局停下（客机只是看，不停）
+// 从联机面板进来的编辑器，关掉后要回到联机面板（而不是两层叠在一起）
+let cfgBackToNet = false;
+
 function toggleCfgPanel(open) {
     const panel = document.getElementById('cfgPanel');
     if (!panel) return;
@@ -283,16 +289,29 @@ function toggleCfgPanel(open) {
     panel.hidden = !want;
     cfgOpen = want;
     if (want) {
+        const netPanel = document.getElementById('netPanel');
+        cfgBackToNet = !!(netPanel && !netPanel.hidden);
+        if (cfgBackToNet) netPanel.hidden = true;      // 一次只留一层
         if (netRole !== 'guest' && state === 'running') {   // 改关卡时先把局停一下
             cfgResume = true;
             togglePause();
         }
         cfgMsg = '';
         syncCfgPanel();
-    } else if (cfgResume) {
-        cfgResume = false;
-        if (state === 'paused') togglePause();
+    } else {
+        if (cfgBackToNet) {                            // 关掉后回房间设置
+            cfgBackToNet = false;
+            const netPanel = document.getElementById('netPanel');
+            if (netPanel) netPanel.hidden = false;
+        }
+        if (cfgResume) {
+            cfgResume = false;
+            if (state === 'paused') togglePause();
+        }
     }
+    // 「返回游戏」在「从房间设置进来」时其实是「返回房间设置」
+    const close = document.getElementById('cfgCloseBtn');
+    if (close) close.textContent = cfgBackToNet ? '← 返回房间设置' : '返回游戏';
 }
 
 // ------------------------------ 关卡预设 ------------------------------
@@ -374,32 +393,259 @@ function savedPresetIndex(name) {
 
 // ------------------------------ 开始页的关卡按钮 ------------------------------
 // 点一下只是「选中这个关卡」（不会开局）；最后一个「🛠 自定义」打开编辑器。
+const PRESET_ROWS = ['startPresetRow', 'netPresetRow'];
+
 function buildStartPresets() {
-    const row = document.getElementById('startPresetRow');
+    for (const rowId of PRESET_ROWS) buildPresetRowInto(rowId);
+    syncStartPresets();
+}
+
+// 预设缩略图：按这套关卡的场地比例现画一个小示意图。零资源，全部现画；
+// 图上的信息是真的 —— 长条场地一眼看出是「高铁大陆 / 巨幕」，方场地是「经典 / 生存」。// 每个内置预设一张手写的 SVG（96×58）。用 currentColor 的部分跟着主题/选中态变色，
+// 特征色固定。data-icon 只是给测试和调试用的标记。
+const PRESET_ICONS = {
+    // 经典：方场地 + 一条绿蛇 + 一个苹果
+    classic:
+        '<svg class="presetIcon" data-icon="classic" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="20" y="8" width="56" height="42" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
+        '<circle cx="62" cy="20" r="3" fill="crimson"/>' +
+        '<circle cx="30" cy="38" r="3.2" fill="#008000"/><circle cx="37" cy="38" r="3.2" fill="#008000"/>' +
+        '<circle cx="44" cy="38" r="3.2" fill="#008000"/><circle cx="44" cy="31" r="3.2" fill="#146b14"/>' +
+        '</svg>',
+
+    // 大乱斗：宽场地 + 满场敌人和苹果（密到发糊就对了）
+    brawl:
+        '<svg class="presetIcon" data-icon="brawl" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="8" y="12" width="80" height="34" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
+        '<circle cx="20" cy="21" r="2.6" fill="crimson"/><circle cx="34" cy="30" r="2.6" fill="#a24bd4"/>' +
+        '<circle cx="46" cy="19" r="2.6" fill="#a24bd4"/><circle cx="58" cy="33" r="2.6" fill="crimson"/>' +
+        '<circle cx="70" cy="22" r="2.6" fill="#a24bd4"/><circle cx="80" cy="35" r="2.6" fill="#a24bd4"/>' +
+        '<circle cx="27" cy="38" r="2.6" fill="#008000"/><circle cx="63" cy="15" r="2.6" fill="crimson"/>' +
+        '</svg>',
+
+    // 生存：厚血（三颗心）+ 少苹果（场地里空空荡荡）
+    survive:
+        '<svg class="presetIcon" data-icon="survive" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="14" y="8" width="68" height="42" rx="4" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="3 3"/>' +
+        '<path d="M22 22c-4-4-9-2-9 2 0 4 6 7 9 9 3-2 9-5 9-9 0-4-5-6-9-2Z" fill="#ff4d6d"/>' +
+        '<path d="M47 18c-3-3-7-1.5-7 1.5 0 3 4.5 5.2 7 6.8 2.5-1.6 7-3.8 7-6.8 0-3-4-4.5-7-1.5Z" fill="#ff4d6d"/>' +
+        '<path d="M74 22c-3-3-7-1.5-7 1.5 0 3 4.5 5.2 7 6.8 2.5-1.6 7-3.8 7-6.8 0-3-4-4.5-7-1.5Z" fill="#ff4d6d"/>' +
+        '</svg>',
+
+    // 空场练习：一块干净的空场地，只有你自己那条蛇
+    practice:
+        '<svg class="presetIcon" data-icon="practice" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="20" y="8" width="56" height="42" rx="4" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.45" stroke-dasharray="5 4"/>' +
+        '<circle cx="38" cy="30" r="3.4" fill="#008000"/>' +
+        '</svg>',
+
+    // 巨幕：大屏幕 + 四角标记
+    giant:
+        '<svg class="presetIcon" data-icon="giant" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="10" y="10" width="76" height="38" rx="3" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
+        '<path d="M6 20V6h14M90 20V6H76M6 38v14h14M90 38v14H76" stroke="currentColor" stroke-opacity="0.5" fill="none"/>' +
+        '<circle cx="30" cy="29" r="3" fill="#008000"/><circle cx="52" cy="24" r="2.6" fill="crimson"/><circle cx="64" cy="34" r="2.6" fill="#a24bd4"/>' +
+        '</svg>',
+
+    // 高铁大陆：又扁又长的场地 + 速度线 + 闪电
+    rail:
+        '<svg class="presetIcon" data-icon="rail" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<rect x="6" y="24" width="84" height="24" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
+        '<path d="M10 18h30M18 11h22M30 4h14" stroke="currentColor" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round"/>' +
+        '<path d="M78 4L70 18h6l-3 12 12-16h-6l4-10Z" fill="#ffd21f"/>' +
+        '<circle cx="20" cy="36" r="3" fill="#008000"/><circle cx="34" cy="36" r="2.6" fill="crimson"/>' +
+        '<circle cx="50" cy="36" r="2.6" fill="crimson"/><circle cx="66" cy="36" r="2.6" fill="#a24bd4"/>' +
+        '</svg>',
+
+    // 闪电战：一颗大闪电 + 一颗空心心（只有 1 滴血，碰一下就没了）
+    blitz:
+        '<svg class="presetIcon" data-icon="blitz" viewBox="0 0 96 58" aria-hidden="true">' +
+        '<path d="M56 2L34 30h12l-6 26 24-32H52l8-22Z" fill="#ffd21f"/>' +
+        '<path d="M24 14c-4-4-10-2-10 3 0 5 7 9 10 11 3-2 10-6 10-11 0-5-6-7-10-3Z" fill="none" stroke="#ff4d6d" stroke-width="2"/>' +
+        '</svg>'
+};
+
+// 图标上要画哪些「特征徽章」——全部从关卡数值推导，所以以后新加预设自动就有：
+//   速度（步长越小闪电越多）/ 厚血（心）/ 没有敌人（禁）/ 道具很多（星）/ 自定义（虚线 + 加号）
+function presetBadges(cfg, custom) {
+    const step = Math.round(cfg.stepMs || 500);
+    return {
+        speed: step <= 140 ? 3 : (step <= 260 ? 2 : (step <= 420 ? 1 : 0)),
+        hp: Math.round(cfg.hp0 || 1) >= 3,
+        noEnemy: cfg.enemies === false,
+        items: Math.round(cfg.i_speed_max || 0) + Math.round(cfg.i_widen_max || 0) >= 4,
+        custom: !!custom
+    };
+}
+
+// 一个小闪电（速度）
+function boltSvg(x, y, s) {
+    return '<path d="M' + x + ' ' + (y - s) + 'L' + (x - s * 0.7) + ' ' + (y + s * 0.15) +
+        'H' + (x - s * 0.1) + 'L' + (x - s * 0.35) + ' ' + (y + s) +
+        'L' + (x + s * 0.75) + ' ' + (y - s * 0.1) + 'H' + (x + s * 0.1) + 'Z" fill="#ffd21f"/>';
+}
+
+// 一个小心形（厚血）
+function heartSvg(x, y, s) {
+    return '<path d="M' + x + ' ' + (y + s * 0.55) +
+        'C' + (x - s * 1.15) + ' ' + (y - s * 0.35) + ' ' + (x - s * 0.35) + ' ' + (y - s * 1.05) + ' ' + x + ' ' + (y - s * 0.4) +
+        'C' + (x + s * 0.35) + ' ' + (y - s * 1.05) + ' ' + (x + s * 1.15) + ' ' + (y - s * 0.35) + ' ' + x + ' ' + (y + s * 0.55) +
+        'Z" fill="#ff4d6d"/>';
+}
+
+// 预设图标：用 SVG 现拼，缩略图就是「这套关卡的场地比例 + 道具密度 + 特征徽章」。
+// 用 currentColor，所以跟着主题/选中态变色，任何缩放都清晰，也不需要任何图片文件。
+function presetIconSvg(cfg, id, custom) {
+    // 内置预设：用写好的那张
+    if (!custom && PRESET_ICONS[id]) return PRESET_ICONS[id];
+
+    const cols = Math.max(4, Math.round(cfg.cols || 15));
+    const rows = Math.max(4, Math.round(cfg.rows || 15));
+    const VW = 96;
+    const VH = 58;
+
+    // 场地矩形：按比例装进框里（长条关卡一眼就看出来）
+    const k = Math.min((VW - 10) / cols, (VH - 10) / rows);
+    const w = Math.max(12, cols * k);
+    const h = Math.max(12, rows * k);
+    const x = (VW - w) / 2;
+    const y = (VH - h) / 2;
+
+    // 用 id 当种子：同一套关卡每次画出来都一样
+    let seed = 7;
+    for (let i = 0; i < id.length; i++) seed = (seed * 31 + id.charCodeAt(i)) & 0xffff;
+    const rnd = function () {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+    };
+    const dot = function (color, r) {
+        return '<circle cx="' + (x + (0.08 + rnd() * 0.84) * w).toFixed(1) +
+            '" cy="' + (y + (0.08 + rnd() * 0.84) * h).toFixed(1) +
+            '" r="' + r + '" fill="' + color + '"/>';
+    };
+
+    let out = '<svg class="presetIcon" data-icon="' + (custom ? 'custom' : 'auto') + '" viewBox="0 0 ' + VW + ' ' + VH + '" aria-hidden="true">';
+    // 场地
+    out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) +
+        '" height="' + h.toFixed(1) + '" rx="3" fill="currentColor" fill-opacity="0.10" ' +
+        'stroke="currentColor" stroke-opacity="0.5"/>';
+
+    // 网格：格子太小就不画（200×150 会糊成一片）
+    if (k >= 3) {
+        let d = '';
+        for (let cx = 1; cx < cols; cx++) {
+            const px = (x + cx * k).toFixed(1);
+            d += 'M' + px + ' ' + y.toFixed(1) + 'V' + (y + h).toFixed(1);
+        }
+        for (let cy = 1; cy < rows; cy++) {
+            const py = (y + cy * k).toFixed(1);
+            d += 'M' + x.toFixed(1) + ' ' + py + 'H' + (x + w).toFixed(1);
+        }
+        out += '<path d="' + d + '" stroke="currentColor" stroke-opacity="0.13" fill="none"/>';
+    }
+
+    // 苹果 / 敌人 / 炮塔：数量也按关卡来，密度一眼可见
+    const apples = Math.max(1, Math.min(16, Math.round(cfg.apples || 4)));
+    for (let i = 0; i < apples; i++) out += dot('crimson', 1.5);
+    const enemies = (cfg.enemies === false) ? 0 : Math.max(0, Math.min(9, Math.round((cfg.enemyMax || 3) / 2)));
+    for (let i = 0; i < enemies; i++) out += dot('#a24bd4', 1.7);
+    const turrets = Math.max(0, Math.min(6, Math.round((cfg.turretMax || 4) / 3)));
+    for (let i = 0; i < turrets; i++) out += dot('#ffd166', 1.4);
+
+    // 玩家那条蛇（不在种子随机里，位置固定）
+    out += '<circle cx="' + (x + 0.3 * w).toFixed(1) + '" cy="' + (y + 0.55 * h).toFixed(1) + '" r="2.2" fill="#008000"/>';
+
+    // ---------------- 特征徽章 ----------------
+    const bd = presetBadges(cfg, custom);
+
+    // 速度：右上角排闪电（越快越多）
+    for (let i = 0; i < bd.speed; i++) out += boltSvg(VW - 10 - i * 9, 11, 6);
+
+    // 厚血：左上角一颗心
+    if (bd.hp) out += heartSvg(12, 10, 6);
+
+    // 没敌人：右上角一个「禁」圈
+    if (bd.noEnemy) {
+        out += '<circle cx="' + (VW - 12) + '" cy="11" r="6" fill="none" stroke="#ff8fa3" stroke-width="1.6"/>' +
+            '<path d="M' + (VW - 16.2) + ' 6.8L' + (VW - 7.8) + ' 15.2" stroke="#ff8fa3" stroke-width="1.6"/>';
+    }
+
+    // 道具很多：左下角一颗四角星
+    if (bd.items) {
+        const sx = 13;
+        const sy = VH - 11;
+        out += '<path d="M' + sx + ' ' + (sy - 7) + 'L' + (sx + 2) + ' ' + (sy - 2) + 'L' + (sx + 7) + ' ' + sy +
+            'L' + (sx + 2) + ' ' + (sy + 2) + 'L' + sx + ' ' + (sy + 7) + 'L' + (sx - 2) + ' ' + (sy + 2) +
+            'L' + (sx - 7) + ' ' + sy + 'L' + (sx - 2) + ' ' + (sy - 2) + 'Z" fill="#00bfff"/>';
+    }
+
+    // 自定义：虚线场地 + 右下角加号（表示「你自己画」）
+    if (bd.custom) {
+        out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + h.toFixed(1) +
+            '" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.8" stroke-dasharray="4 3"/>';
+        const px = VW - 13;
+        const py = VH - 12;
+        out += '<path d="M' + (px - 6) + ' ' + py + 'H' + (px + 6) + 'M' + px + ' ' + (py - 6) + 'V' + (py + 6) +
+            '" stroke="#7fd7ff" stroke-width="2.4" stroke-linecap="round"/>';
+    }
+
+    out += '</svg>';
+    return out;
+}
+
+function presetCard(row, id, name, note, cfg) {
+    const card = document.createElement('button');
+    card.className = 'startBtn presetCard';
+    if (id) card.setAttribute('data-preset', id);
+    else card.setAttribute('data-custom', row.id);
+    card.title = note;
+
+    const ico = document.createElement('span');
+    ico.className = 'presetIconBox';
+    ico.innerHTML = presetIconSvg(cfg, id || 'custom', !id);
+    card.appendChild(ico);
+
+    const nm = document.createElement('span');
+    nm.className = 'presetName';
+    nm.textContent = name;
+    card.appendChild(nm);
+
+    const nt = document.createElement('span');
+    nt.className = 'presetNote';
+    nt.textContent = note || '';
+    card.appendChild(nt);
+
+    row.appendChild(card);
+    return card;
+}
+
+function buildPresetRowInto(rowId) {
+    const row = document.getElementById(rowId);
     if (!row) return;
     row.innerHTML = '';
 
     for (let i = 0; i < LEVEL_PRESETS.length; i++) {
         (function (p) {
-            const b = document.createElement('button');
-            b.className = 'startBtn';
-            b.textContent = p.name;
-            b.setAttribute('data-preset', p.id);
-            if (p.note) b.title = p.note;
-            b.addEventListener('click', function () {
+            // 缩略图要画「这套关卡的实际样子」：预设没写的字段用关卡默认值补上
+            const eff = Object.assign({}, levelDefaults(), p.cfg);
+            if (!p.cfg.cols) {
+                eff.cols = MODES[mode].cols;
+                eff.rows = MODES[mode].rows;
+            }
+            const card = presetCard(row, p.id, p.name, p.note, eff);
+            card.addEventListener('click', function () {
                 tapFeedback();
+                if (typeof netRole !== 'undefined' && netRole === 'guest') return;   // 客机只读
                 applyPresetCfg(p.cfg, '已选「' + p.name + '」');
                 startPresetId = p.id;      // applyPresetCfg 内部会清掉，所以放在它后面
                 syncStartPresets();
             });
-            row.appendChild(b);
         })(LEVEL_PRESETS[i]);
     }
 
-    const custom = document.createElement('button');
-    custom.className = 'startBtn';
-    custom.id = 'startCustomBtn';
-    custom.textContent = '🛠 自定义';
+    // 「自定义」也做一张卡：+ 号 + 说明
+    const custom = presetCard(row, '', '自定义', '改数值 / 存档 / 短码', { cols: 15, rows: 15, apples: 3, enemyMax: 4, turretMax: 3 });
+    custom.className = 'startBtn presetCard customPreset';
     custom.title = '打开关卡编辑器：改数值 / 存预设 / 下载 / 短码';
     custom.addEventListener('click', function () {
         tapFeedback();
@@ -407,20 +653,50 @@ function buildStartPresets() {
         syncStartPresets();
         toggleCfgPanel(true);
     });
-    row.appendChild(custom);
 
     syncStartPresets();
 }
 
+// 开始页和联机面板共用一套「选中态 + 房间设置摘要」
 function syncStartPresets() {
-    const row = document.getElementById('startPresetRow');
-    if (!row) return;
-    const btns = row.querySelectorAll('[data-preset]');
-    for (let i = 0; i < btns.length; i++) {
-        btns[i].classList.toggle('is-on', btns[i].getAttribute('data-preset') === startPresetId);
+    for (const rowId of PRESET_ROWS) {
+        const row = document.getElementById(rowId);
+        if (!row) continue;
+        const btns = row.querySelectorAll('[data-preset]');
+        for (let i = 0; i < btns.length; i++) {
+            btns[i].classList.toggle('is-on', btns[i].getAttribute('data-preset') === startPresetId);
+        }
+        const custom = row.querySelector('[data-custom]');
+        if (custom) custom.classList.toggle('is-on', !startPresetId);
+        const guest = (typeof netRole !== 'undefined') && netRole === 'guest';
+        const all = row.querySelectorAll('.startBtn');
+        for (let k = 0; k < all.length; k++) all[k].disabled = guest;   // 客机只读
     }
-    const custom = document.getElementById('startCustomBtn');
-    if (custom) custom.classList.toggle('is-on', !startPresetId);
+    syncRoomSettings();
+}
+
+// 联机面板里的「人数上限」：初始值跟着关卡 / 模式走，主机可以直接点着改
+function syncRoomSettings() {
+    const btn = document.getElementById('netMaxPlayersBtn');
+    if (!btn) return;
+    const n = Math.round(levelCfg.maxPlayers) || 6;
+    const label = '人数上限：' + n;
+    if (btn.textContent !== label) btn.textContent = label;
+    const isGuest = (typeof netRole !== 'undefined') && netRole === 'guest';
+    btn.disabled = isGuest;
+    btn.title = isGuest ? '客机不能改房间设置' : '点一下 +1，到 6 回到 2';
+    const info = document.getElementById('levelInfoNet');
+    if (info && typeof levelSummaryText === 'function') {
+        const t = levelSummaryText();
+        if (info.textContent !== t) info.textContent = t;
+    }
+}
+
+function cycleMaxPlayers() {
+    if (typeof netRole !== 'undefined' && netRole === 'guest') return;
+    const cur = Math.round(levelCfg.maxPlayers) || 6;
+    setCfg({ maxPlayers: (cur >= 6) ? 2 : (cur + 1) });
+    syncRoomSettings();
 }
 
 function buildPresetBar() {

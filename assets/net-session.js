@@ -1400,12 +1400,14 @@ if (NATIVE) {
     document.getElementById('lanHostBtn').addEventListener('click', lanOpenRoom);
 }
 startBtnNetEl.addEventListener('click', function () {
+    if (typeof toggleCfgPanel === 'function') toggleCfgPanel(false);   // 不叠层
     startPanelEl.hidden = true;
     netPanelEl.hidden = false;
     netCodeEl.value = '';
     netUseBtnEl.disabled = true;
     netUseBtnEl.textContent = '用这段码';
     netSetTeam(teamMode);
+    if (typeof syncStartPresets === 'function') syncStartPresets();   // 房间设置：初始值 + 客机只读
     // 桌面版有局域网/跨网两种；纯浏览器只有连接码 —— 但选择器仍然显示，
     // 只是把那两种置灰并说明原因（见 setNetKind）
     // 桌面版默认局域网；浏览器版默认直连（能进房），连接码仍可手动选

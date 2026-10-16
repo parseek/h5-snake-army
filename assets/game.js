@@ -512,6 +512,8 @@ function hideStartUi() {
 
 // 回到开始面板（Esc 或开局时）
 function showMenu() {
+    if (typeof toggleCfgPanel === 'function') toggleCfgPanel(false);   // 编辑器别叠在菜单上
+    if (typeof toggleChat === 'function') toggleChat(false);
     lanClearRoom();
     netLeave();
     reset();               // 用当前模式的场地当背景
