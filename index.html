@@ -576,6 +576,9 @@
             }
 
             .operate .btn.flex {
+                /* 必须把 width 写回来：上面 .operate .btn 的 66px 写在媒体查询里、
+                   位置比 .operate .flex { width: 100% } 更靠后，会把整行按钮压成 66px */
+                width: 100%;
                 height: 48px;
                 font-size: 14px;
             }
@@ -629,6 +632,7 @@
             }
 
             .operate .btn.flex {
+                width: 100%;
                 height: 40px;
                 font-size: 13px;
             }
