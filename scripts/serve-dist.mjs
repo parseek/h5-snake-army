@@ -88,7 +88,10 @@ export function startServer(port, dir) {
     });
 
     const url = 'http://127.0.0.1:' + port;
-    const listening = new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+    const listening = new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', resolve);
+    });
     console.log('[serve-dist] ' + url + '/ 根目录 ' + dir);
 
     return {
@@ -106,5 +109,12 @@ if (isMain) {
     const port = Number(args.find((a) => /^\d+$/.test(a))) || 9211;
     const dirIdx = args.indexOf('--dir');
     const dir = join(root, dirIdx >= 0 && args[dirIdx + 1] ? args[dirIdx + 1] : 'dist');
-    startServer(port, dir);
+    startServer(port, dir).listening.catch((err) => {
+        // Windows 会把一些端口段留给系统（netsh interface ipv4 show excludedportrange），
+        // 撞上时 node 只给一个裸 EACCES，看不出是端口的问题
+        console.error('[serve-dist] 起不来：' + err.message +
+            (err.code === 'EACCES' || err.code === 'EADDRINUSE'
+                ? '　（端口被占用或被系统保留，换一个再试，比如 9333）' : ''));
+        process.exit(1);
+    });
 }
