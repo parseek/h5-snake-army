@@ -135,8 +135,8 @@ function boardRect() {
 }
 
 function drawBoard() {
-    // 视口先清空（世界比视口小的时候，四周露出来的是页面底色）
-    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    // 视口先清空（要用「世界像素」里的尺寸，不然缩放后会剩一条没清掉）
+    ctx.clearRect(0, 0, viewWorldW(), viewWorldH());
 
     const b = boardRect();
     ctx.save();
@@ -562,6 +562,7 @@ function drawDrops() {
 }
 
 function drawOverlay() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // 遮罩和文字画在画布坐标系：不跟着缩小
     ctx.fillStyle = COLOR.mask;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);   // 遮罩盖视口，不盖整个世界
 
@@ -600,6 +601,7 @@ function drawOverlay() {
 }
 
 function drawPauseOverlay() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = COLOR.mask;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
@@ -640,23 +642,26 @@ function updateCamera() {
     let ty = camY;
     const p = cameraFocus();
     if (p && p.body && p.body[0]) {
-        tx = p.body[0].x * CELL + CELL / 2 - VIEW_W / 2;
-        ty = p.body[0].y * CELL + CELL / 2 - VIEW_H / 2;
+        // 居中用的是「一屏能看到的世界大小」，不是画布尺寸（缩放后两者不一样）
+        tx = p.body[0].x * CELL + CELL / 2 - viewWorldW() / 2;
+        ty = p.body[0].y * CELL + CELL / 2 - viewWorldH() / 2;
     }
-    tx = clampCam(tx, boardWorldW(), VIEW_W);
-    ty = clampCam(ty, boardWorldH(), VIEW_H);
+    tx = clampCam(tx, boardWorldW(), viewWorldW());
+    ty = clampCam(ty, boardWorldH(), viewWorldH());
 
     // 第一帧直接就位，否则开局会从左上角飞过去
     const k = camReady ? (1 - Math.exp(-dt / 110)) : 1;
-    camX = clampCam(camX + (tx - camX) * k, boardWorldW(), VIEW_W);
-    camY = clampCam(camY + (ty - camY) * k, boardWorldH(), VIEW_H);
+    camX = clampCam(camX + (tx - camX) * k, boardWorldW(), viewWorldW());
+    camY = clampCam(camY + (ty - camY) * k, boardWorldH(), viewWorldH());
     camReady = true;
 }
 
 // 画面之外的敌人 / 其他玩家：在视口边缘点一个小圆点（用各自的颜色）。
 // 大地图上不至于「人跑哪去了都不知道」。
 function drawOffscreenHints() {
-    const M = 10;
+    const M = 10 / zoom;                  // 离边缘 10 个「屏幕像素」，缩放后同样远
+    const vw = viewWorldW();
+    const vh = viewWorldH();
     const marks = [];
     for (let i = 0; i < players.length; i++) {
         const p = players[i];
@@ -671,9 +676,9 @@ function drawOffscreenHints() {
 
     for (let i = 0; i < marks.length; i++) {
         const m = marks[i];
-        if (m.x >= 0 && m.x <= VIEW_W && m.y >= 0 && m.y <= VIEW_H) continue;
-        const x = Math.max(M, Math.min(VIEW_W - M, m.x));
-        const y = Math.max(M, Math.min(VIEW_H - M, m.y));
+        if (m.x >= 0 && m.x <= vw && m.y >= 0 && m.y <= vh) continue;
+        const x = Math.max(M, Math.min(vw - M, m.x));
+        const y = Math.max(M, Math.min(vh - M, m.y));
         ctx.beginPath();
         ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fillStyle = m.color;
@@ -685,7 +690,8 @@ function drawOffscreenHints() {
 }
 
 function render() {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // dpr × zoom：之后所有绘制都在「世界像素」里，缩放由这一句统一负责
+    ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
     updateCamera();
     drawBoard();
 

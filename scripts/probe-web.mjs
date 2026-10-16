@@ -438,6 +438,12 @@ function phase4run(w) {
     step('level-info-both-places', function () { return ev(w, '(document.getElementById("levelInfoNet").textContent === document.getElementById("levelInfo").textContent) + "/ 长度 " + document.getElementById("levelInfo").textContent.length;'); });
     step('level-info-off-items', function () { return ev(w, 'setCfg({ enemies: false, powerups: false }); syncCfgPanel(); var t = document.getElementById("levelInfo").textContent; (t.indexOf("敌人 关") >= 0) + "/" + (t.indexOf("道具 关") >= 0) + " / " + t.slice(0, 40);'); });
 
+    // 手机端镜头的缩放：装成粗指针调一次 updateView，验公式本身
+    step('zoom-mobile-floor', function () { return ev(w, 'netLeave(); var mm = window.matchMedia; window.matchMedia = function (q) { return { matches: q.indexOf("coarse") >= 0 }; }; levelCfg.cols = 0; levelCfg.rows = 0; start(1); setArenaSize(200, 150, gameNow); widenStartAt = 0; resizeCanvas(); var big = zoom; setArenaSize(15, 15, gameNow); widenStartAt = 0; resizeCanvas(); var small = zoom; window.matchMedia = mm; "大地图 " + big + "/小地图 " + small + "/ 下限 " + MOBILE_ZOOM_MIN;'); });
+    step('zoom-shows-2.5x', function () { return ev(w, 'netLeave(); var mm = window.matchMedia; window.matchMedia = function (q) { return { matches: q.indexOf("coarse") >= 0 }; }; start(1); setArenaSize(200, 150, gameNow); widenStartAt = 0; resizeCanvas(); var r = Math.round((viewWorldW() / VIEW_W) * 100) / 100; var cells = Math.round(viewWorldW() / CELL); var plain = Math.round(VIEW_W / CELL); window.matchMedia = mm; "放大倍数 " + r + " / 一屏 " + cells + " 格（1:1 时 " + plain + " 格）";'); });
+    step('zoom-draw-matches', function () { return ev(w, 'netLeave(); start(1); setArenaSize(60, 40, gameNow); widenStartAt = 0; resizeCanvas(); players[0].body[0].x = 30; players[0].body[0].y = 20; camReady = false; updateCamera(); var z0 = zoom; zoom = 0.4; render(); var px = ctx.getImageData(Math.round((cxOf(players[0].body[0]) - 5) * zoom * dpr), Math.round(cyOf(players[0].body[0]) * zoom * dpr), 1, 1).data; zoom = z0; "缩放到 0.4 后蛇头位置取到 " + px[0] + "," + px[1] + "," + px[2];'); });
+    step('zoom-restore', function () { return ev(w, 'netLeave(); levelCfg.cols = 0; levelCfg.rows = 0; start(1); resizeCanvas(); Math.round(zoom * 100) / 100 + "/" + VIEW_W + "x" + VIEW_H;'); });
+
     report.phases.seats = {
         maxPlayers: ev(w, 'MAX_PLAYERS'),
         wanted: ev(w, 'netWantedPlayers()'),

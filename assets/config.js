@@ -238,6 +238,15 @@ let VIEW_H = 0;
 let camX = 0;
 let camY = 0;
 
+// 镜头缩放：画布尺寸不变，但世界按 zoom 缩放着画 —— zoom < 1 就是「拉远、格子更小、一屏看到更多」。
+// 桌面端固定 1:1；手机端尽量把整个场地塞进屏幕，最多拉到 MOBILE_ZOOM_MIN（再小球就没法看了）。
+// 拉到最远时一屏能看到 1/0.4 = 2.5 倍于 1:1 时的世界（格子从 20px 变成 8px）
+const MOBILE_ZOOM_MIN = 0.4;
+let zoom = 1;
+
+function viewWorldW() { return VIEW_W / zoom; }    // 一屏能看到多少「世界像素」
+function viewWorldH() { return VIEW_H / zoom; }
+
 // 放大动画期间「场地已经长到多大」。世界尺寸（W/H）在动画一开始就是最终值，
 // 这块才是逐帧变大的那个 —— 视口、摄像机、裁剪都按它算。
 let drawWorldW = COLS * CELL;
@@ -308,6 +317,16 @@ function updateView() {
 
     availViewW = Math.max(5 * CELL, Math.floor(availW / CELL) * CELL);
     availViewH = Math.max(5 * CELL, Math.floor(availH / CELL) * CELL);
+
+    // 手机端：先算「整个场地塞进屏幕」需要多小，但不小于 MOBILE_ZOOM_MIN
+    const phone = !!(window.matchMedia && window.matchMedia('(pointer: coarse), (max-width: 560px)').matches);
+    if (phone) {
+        const w = Math.max(1, boardWorldW());
+        const h = Math.max(1, boardWorldH());
+        zoom = Math.max(MOBILE_ZOOM_MIN, Math.min(1, availViewW / w, availViewH / h));
+    } else {
+        zoom = 1;
+    }
     syncViewToBoard();
 }
 
@@ -325,8 +344,8 @@ function syncViewToBoard() {
     if (vw === VIEW_W && vh === VIEW_H) return;
 
     setCanvasSize(vw, vh);
-    camX = clampCam(camX, boardWorldW(), VIEW_W);
-    camY = clampCam(camY, boardWorldH(), VIEW_H);
+    camX = clampCam(camX, boardWorldW(), viewWorldW());
+    camY = clampCam(camY, boardWorldH(), viewWorldH());
 }
 
 // 把摄像机夹在世界里；世界比视口还小的话就居中（等于不启用摄像机）
