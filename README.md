@@ -19,7 +19,7 @@
 
 1. **推 GitHub**（推荐）：Netlify 连着 GitHub 仓库，push 上去它自己重建 —— 什么都不用做。
 2. **手动拖**：`npm run pack:netlify` 会生成 `release/netlify/`（目录）和
-   `release/netlify-1.0.0.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
+   `release/netlify-0.1.0.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
    不用碰 GitHub。包里只有 `index.html` + `assets/`。
 
 ## 玩法
@@ -333,7 +333,7 @@ npm run build
 依次做三件事：下载 EasyTier（还没有的话）→ 编译并打包 exe → 组装便携包。产物：
 
 ```
-release/snake-army-1.0.0-win-x64.zip      14.5 MB
+release/snake-army-0.1.0-win-x64.zip      14.5 MB
   snake-army.exe                           3.11 MB   主程序（前端已经嵌进去了）
   binaries/easytier-core.exe              23.27 MB   跨网用
   binaries/easytier-cli.exe                9.51 MB   排查用
@@ -361,7 +361,7 @@ taskkill /IM snake-army.exe /F
 
 仓库在 Gitee，而且这台机器的 hosts 把 github.com 整个指到了 127.0.0.1，所以发行版发 Gitee：
 
-**网页**：仓库 →「发行版」→「新建发行版」，填 tag（比如 `v1.0.0`），
+**网页**：仓库 →「发行版」→「新建发行版」，填 tag（比如 `v0.1.0`），
 把上面那个 zip 传上去。
 
 **或者 API**：
@@ -369,14 +369,14 @@ taskkill /IM snake-army.exe /F
 ```bash
 curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases" \
   -d "access_token=<你的令牌>" \
-  -d "tag_name=v1.0.0" \
-  -d "name=贪吃蛇 v1.0.0" \
+  -d "tag_name=v0.1.0" \
+  -d "name=贪吃蛇 v0.1.0" \
   -d "body=首个可发布版本"
 
 # 拿到 release id 之后传附件：
 curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases/<id>/attach_files" \
   -d "access_token=<你的令牌>" \
-  -F "file=@release/snake-army-1.0.0-win-x64.zip"
+  -F "file=@release/snake-army-0.1.0-win-x64.zip"
 ```
 
 安装器（NSIS/MSI）这条路**没走**：Tauri 的打包工具要从 GitHub 现场下载，

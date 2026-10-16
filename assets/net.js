@@ -12,7 +12,7 @@
 
 // 程序版本：联机双方必须一致。快照格式 / 玩法一变就往上加，
 // 它会被写进连接码、握手时再对一次，不一致直接拒掉而不是硬连。
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '0.1.0';
 const NET_TAG = 'SNK';          // 连接码的 Magic
 const NET_SEND_MS = 33;         // 主机发快照的间隔（约 30Hz）
 const NET_CONNECT_MS = 25000;   // 打洞超时
