@@ -229,6 +229,116 @@ function phase3(w) {
     step('showMenu', function () { ev(w, 'showMenu()'); return ev(w, 'state'); });
     report.phases.final = { state: ev(w, 'state'), version: ev(w, 'APP_VERSION'), maxPlayers: ev(w, 'MAX_PLAYERS'), arena: ev(w, 'COLS + "x" + ROWS') };
     flush();
+    setTimeout(function () { phase4(w); }, 700);
+}
+
+// 第四个阶段：多客机 / 观战。这里不真开 WebRTC（无头浏览器里没法两端互连），
+// 而是往座位表里塞「假通道」—— 它跟真通道走的是同一套 netPeerSend /
+// netOnMessage / netBroadcastSnapshot，所以座位分配、按座位分发快照、按座位收按键、
+// 观战只看不操作，这些逻辑都能在真实页面上验到。
+const MK = "function mk(seat) { return { seat: seat, open: true, pc: null, dc: { send: function (s) { window.__sent.push(s); } } }; }";
+
+function phase4(w) {
+    report.phase = 'seats';
+
+    step('seat-alloc', function () {
+        return ev(w, [
+            'netLeave();',
+            'netRole = "host";',
+            'netMaxPlayers = 4;',
+            'netPeers = [];',
+            'var a = netTakeSeat(); netPeers.push({ seat: a, open: true, pc: null, dc: null });',
+            'var b = netTakeSeat(); netPeers.push({ seat: b, open: true, pc: null, dc: null });',
+            'var c = netTakeSeat(); netPeers.push({ seat: c, open: true, pc: null, dc: null });',
+            'var d = netTakeSeat();',
+            'a + "/" + b + "/" + c + "/" + d;'
+        ].join('\\n'));
+    });
+
+    step('one-snapshot-per-seat', function () {
+        return ev(w, [
+            MK,
+            'window.__sent = [];',
+            'netRole = "host";',
+            'netMaxPlayers = 3;',
+            'netPeers = [mk(1), mk(2), mk(-1)];',
+            'netOpen = false;',
+            'netBroadcastSnapshot({ t: "state", now: 1 });',
+            'window.__sent.map(function (s) { var m = JSON.parse(s); return m.you + ":" + m.t; }).join(",");',
+        ].join('\\n'));
+    });
+
+    step('mid-game-join', function () {
+        return ev(w, [
+            MK,
+            'start(2, "coop");',
+            'netRole = "host";',
+            'netMaxPlayers = 4;',
+            'netPeers = [mk(1), mk(2)];',
+            'var before = players.length;',
+            'netSyncPlayers();',
+            'before + "->" + players.length + "/" + (players[2] && players[2].alive ? "alive" : "?") + "/" + (players[2] && players[2].spawnAt >= 0 ? "spawn-anim" : "no-anim") + "/" + netWantedPlayers();',
+        ].join('\\n'));
+    });
+
+    step('input-routes-by-seat', function () {
+        return ev(w, [
+            MK,
+            'netRole = "host";',
+            'netPeers = [mk(1), mk(2), mk(-1)];',
+            'var q1 = players[1].queue.length, q2 = players[2].queue.length;',
+            'netOnMessage(JSON.stringify({ t: "dir", dir: "up" }), netPeers[0]);',
+            'netOnMessage(JSON.stringify({ t: "dir", dir: "down" }), netPeers[1]);',
+            'var after1 = players[1].queue.length, after2 = players[2].queue.length;',
+            'netOnMessage(JSON.stringify({ t: "dir", dir: "up" }), netPeers[2]);',
+            'netOnMessage(JSON.stringify({ t: "build" }), netPeers[0]);',
+            'q1 + "/" + q2 + " -> " + after1 + "/" + after2 + " spec:" + players[2].queue.length + " build:" + String(!!players[1].buildRequested);',
+        ].join('\\n'));
+    });
+
+    step('spectator-lockout', function () {
+        return ev(w, [
+            MK,
+            'window.__sent = [];',
+            'netRole = "guest";',
+            'netSeat = -1;',
+            'netOpen = true;',
+            'netPeers = [mk(-1)];',
+            'netPrimary = netPeers[0];',
+            'var before = players[0] ? players[0].queue.length : -1;',
+            'localTurn("up");',
+            'localBuild();',
+            'netAskHost("pause");',
+            'syncNetBar();',
+            'var who = document.getElementById("netBarWho").textContent;',
+            '__sent.length + "|" + who + "|pause:" + document.getElementById("netBarPause").hidden + "|restart:" + document.getElementById("netBarRestart").hidden + "|" + document.getElementById("netBarState").textContent + "|queue:" + (players[0] ? players[0].queue.length : -1) + "(was " + before + ")";',
+        ].join('\\n'));
+    });
+
+    step('guest-seat-from-snapshot', function () {
+        return ev(w, [
+            'var m = netSnapshot();',
+            'm.you = 2;',
+            'netApplySnapshot(m);',
+            'netRole + "/" + netSeat + "/" + netSpectating();',
+        ].join('\\n'));
+    });
+
+    step('restore-local', function () {
+        return ev(w, [
+            'netLeave();',
+            'start(1, "coop");',
+            'String(netRole) + "/" + String(netSeat) + "/" + netOpen + "/" + state + "/" + players.length;',
+        ].join('\\n'));
+    });
+
+    report.phases.seats = {
+        maxPlayers: ev(w, 'MAX_PLAYERS'),
+        wanted: ev(w, 'netWantedPlayers()'),
+        roster: ev(w, 'netRosterText()'),
+        spectating: ev(w, 'netSpectating()')
+    };
+    flush();
     document.title = 'PROBE_DONE';
 }
 </script>

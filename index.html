@@ -522,6 +522,8 @@
                     <button class="startBtn small" id="netHostBtn">我是主机</button>
                     <button class="startBtn small" id="netGuestBtn">我是客机</button>
                 </div>
+                <div class="tip">最多 6 人同局。主机接上一个人之后，按钮会变成「再让一个人进来」，
+                    可以一个个加；玩家席满了以后发出去的码就是<b>观战码</b>（只能看，不能操作）。</div>
                 <div class="row">
                     <button class="startBtn small" id="netCoopBtn">合作</button>
                     <button class="startBtn small" id="netVsBtn">竞争</button>
@@ -534,7 +536,7 @@
                     <div class="row">
                         <input id="roomCols" class="netIce portInput" spellcheck="false" placeholder="场地宽" />
                         <input id="roomRows" class="netIce portInput" spellcheck="false" placeholder="场地高" />
-                        <input id="roomMax" class="netIce portInput" spellcheck="false" placeholder="人数上限" />
+                        <input id="roomMax" class="netIce portInput" spellcheck="false" placeholder="人数上限 2-6" />
                         <input id="roomPort" class="netIce portInput" spellcheck="false" placeholder="端口" />
                         <button class="startBtn small" id="lanHostBtn">开个房间</button>
                     </div>
@@ -621,6 +623,8 @@
             玩法：开局先选「单人」或「本地双人」（按 1 / 2 也行）；
             联机对战走 WebRTC 直连：主机点「我是主机」生成连接码发给对方，
             对方点「我是客机」粘贴后生成应答码发回来，主机填进去即可开局（零服务器）；
+            一条连接一个座位，主机可以一位一位地加，最多 6 人同局；玩家席坐满后
+            再发出去的码就是观战码 —— 观战的人能看到整局画面，但不发任何操作；
             双人分「合作」和「竞争」：合作时队友出局后场上会出现粉色十字（✚），
             活着的人吃到就能把队友救回来；竞争时不能复活，炮塔会连对方一起打，先出局的一方输。
             双人同屏时 —— 🟢 P1 用方向键、🟠 P2 用 WASD，各自吃红色苹果（🍎）得分；
@@ -822,10 +826,10 @@ if (widenStartAt) {
     }
 }
 
-// 主机：按约 30Hz 把状态推给客机
+// 主机：按约 30Hz 把状态推给所有客机 —— 同一帧快照，但每个人那份的 you 不同
 if (netRole === 'host' && netOpen && gameNow - netLastSend >= NET_SEND_MS) {
     netLastSend = gameNow;
-    netSend(netSnapshot());
+    netBroadcastSnapshot(netSnapshot());
 }
 
 syncBoostHud(now);

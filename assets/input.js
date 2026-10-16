@@ -23,7 +23,7 @@ function dualLocal() {
 function localTurn(dirName) {
     if (state !== 'running' || !dirName) return;
     if (netRole === 'guest') {
-        netSend({ t: 'dir', dir: dirName });
+        if (!netSpectating()) netSend({ t: 'dir', dir: dirName });   // 观战只看不操作
         return;
     }
     if (players && players[0]) turn(players[0], dirName);
@@ -32,7 +32,7 @@ function localTurn(dirName) {
 function localBuild() {
     if (state !== 'running') return;
     if (netRole === 'guest') {
-        netSend({ t: 'build' });
+        if (!netSpectating()) netSend({ t: 'build' });
         return;
     }
     if (players && players[0]) players[0].buildRequested = true;

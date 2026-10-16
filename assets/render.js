@@ -568,7 +568,9 @@ function drawOverlay() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
     ctx.font = '12px ' + FONT;
     ctx.fillText(netRole === 'guest'
-        ? '等主机重开一局（也可以点上面的「请求重开」）· 按 Esc 断开连接'
+        ? (netSpectating()
+            ? '观战中 · 等主机重开一局 · 按 Esc 断开'
+            : '等主机重开一局（也可以点上面的「请求重开」）· 按 Esc 断开连接')
         : '按空格 / 回车重新开始 · 按 Esc 回到模式选择', W / 2, H / 2 + 38);
 }
 

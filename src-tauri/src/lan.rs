@@ -25,6 +25,12 @@ const PREFERRED_PORT: u16 = 47812;
 
 type Rooms = Arc<Mutex<HashMap<String, Room>>>;
 
+/// 一个座位上的信令：房主放 offer，来客放 answer
+struct Seat {
+    offer: String,
+    answer: Option<String>,
+}
+
 struct Room {
     name: String,
     /// 房间描述，房主填，给来客看
@@ -34,13 +40,67 @@ struct Room {
     /// 场地初始宽高（格）
     cols: u16,
     rows: u16,
-    /// 玩家上限
+    /// 玩家上限（含房主）
     max_players: u16,
-    /// 现在几个人（含房主）。房主轮询应答码时会顺带更新。
+    /// 现在几个人（含房主）。房主轮询时会顺带报上来。
     players: u16,
-    offer: String,
-    answer: Option<String>,
+    /// 座位号 -> 那一席的信令。座位 1..max_players-1 是玩家席，
+    /// 负数（-1、-2…）是观战席 —— 玩家席满了还能进来看。
+    seats: HashMap<i16, Seat>,
     seen: u64,
+}
+
+impl Room {
+    /// 玩家席里「有 offer、还没人应答」的还剩几个
+    fn free_player_seats(&self) -> u16 {
+        (1..self.max_players)
+            .filter(|s| self.seats.get(&(*s as i16)).map(|x| x.answer.is_none()).unwrap_or(false))
+            .count() as u16
+    }
+
+    fn answered_player_seats(&self) -> u16 {
+        self.seats
+            .iter()
+            .filter(|(s, x)| **s > 0 && x.answer.is_some())
+            .count() as u16
+    }
+
+    fn spectators(&self) -> u16 {
+        self.seats
+            .iter()
+            .filter(|(s, x)| **s < 0 && x.answer.is_some())
+            .count() as u16
+    }
+
+    fn free_spectator_seats(&self) -> u16 {
+        self.seats
+            .iter()
+            .filter(|(s, x)| **s < 0 && x.answer.is_none())
+            .count() as u16
+    }
+
+    /// 现在几个人：房主 + 已经应答的玩家席，跟房主报上来的取大的那个
+    fn live_players(&self) -> u16 {
+        self.players.max(1 + self.answered_player_seats())
+    }
+
+    /// 下一个能坐的座位：先玩家席，再观战席；都没有就 None
+    fn take_seat(&self) -> Option<i16> {
+        for s in 1..self.max_players {
+            let s = s as i16;
+            if self.seats.get(&s).map(|x| x.answer.is_none()).unwrap_or(false) {
+                return Some(s);
+            }
+        }
+        let mut spec: Vec<i16> = self
+            .seats
+            .iter()
+            .filter(|(s, x)| **s < 0 && x.answer.is_none())
+            .map(|(s, _)| *s)
+            .collect();
+        spec.sort_unstable_by(|a, b| b.cmp(a)); // -1 优先，-2 次之
+        spec.first().copied()
+    }
 }
 
 static PORT: OnceLock<u16> = OnceLock::new();
@@ -185,10 +245,12 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                             "cols": r.cols,
                             "rows": r.rows,
                             "maxPlayers": r.max_players,
-                            "players": r.players,
-                            "taken": r.answer.is_some(),
-                            // 已经有人应答就是 2 人满员（房主 + 来客）
-                            "players": if r.answer.is_some() { 2 } else { 1 },
+                            "players": r.live_players(),
+                            "spectators": r.spectators(),
+                            "freeSeats": r.free_player_seats(),
+                            "freeSpectatorSeats": r.free_spectator_seats(),
+                            // 观战席都没了才算「进不去」
+                            "taken": r.free_player_seats() == 0 && r.free_spectator_seats() == 0,
                         })
                     })
                     .collect(),
@@ -200,25 +262,67 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
             )
         }
 
+        // 来客取座位：给一个「有 offer、还没人应答」的座位（先玩家席，再观战席）
         ("GET", "/api/offer") => {
             sweep(rooms);
             let id = query_of(target, "id").unwrap_or_default();
             let found = rooms.lock().ok().and_then(|mut m| {
                 let r = m.get_mut(&id)?;
                 r.seen = now_secs();
-                Some((r.name.clone(), r.offer.clone()))
+                let seat = r.take_seat()?;
+                let offer = r.seats.get(&seat).map(|s| s.offer.clone()).unwrap_or_default();
+                Some((r.name.clone(), seat, offer))
             });
             match found {
-                Some((name, offer)) => (200, json!({ "name": name, "offer": offer }).to_string()),
-                None => (404, json!({ "error": "房间不存在或已过期" }).to_string()),
+                Some((name, seat, offer)) => (
+                    200,
+                    json!({ "name": name, "seat": seat, "offer": offer }).to_string(),
+                ),
+                None => (409, json!({ "error": "座位都满了" }).to_string()),
             }
         }
 
-        ("GET", "/api/answer") => {
+        // 房主把某个座位的 offer 挂上来（每个座位一份）
+        ("POST", "/api/offer") => {
+            let v: Value = serde_json::from_str(body).unwrap_or(json!({}));
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+            let offer = v.get("offer").and_then(|x| x.as_str()).unwrap_or("");
+            let seat = v.get("seat").and_then(|x| x.as_i64()).unwrap_or(0) as i16;
+            if offer.is_empty() {
+                return (400, json!({ "error": "缺少 offer" }).to_string());
+            }
+            sweep(rooms);
+            let mut code = 200;
+            let mut out = json!({ "ok": true });
+            if let Ok(mut m) = rooms.lock() {
+                match m.get_mut(id) {
+                    None => {
+                        code = 404;
+                        out = json!({ "error": "房间不存在或已过期" });
+                    }
+                    Some(r) => {
+                        r.seen = now_secs();
+                        r.seats.insert(
+                            seat,
+                            Seat {
+                                offer: offer.to_string(),
+                                answer: None,
+                            },
+                        );
+                    }
+                }
+            }
+            (code, out.to_string())
+        }
+
+        // 房主轮询：哪些座位已经有人应答了。
+        // 故意「读不消费」——网络抖一下就丢一张应答码的坑不值得踩；
+        // 房主那边按座位去重就够了。
+        ("GET", "/api/answers") => {
             sweep(rooms);
             let id = query_of(target, "id").unwrap_or_default();
             // 房主每 700ms 轮询一次，顺带把「现在几个人」报上来，
-            // 来客在房间列表里才能看到实时人数，而不是写死的 1/2。
+            // 来客在房间列表里才能看到实时人数。
             let reported = query_of(target, "players").and_then(|v| v.parse::<u16>().ok());
             let found = rooms.lock().ok().and_then(|mut m| {
                 let r = m.get_mut(&id)?;
@@ -226,20 +330,28 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                 if let Some(n) = reported {
                     r.players = n.max(1);
                 }
-                Some(r.answer.clone().unwrap_or_default())
+                let mut list: Vec<(i16, String)> = r
+                    .seats
+                    .iter()
+                    .filter_map(|(s, x)| x.answer.clone().map(|a| (*s, a)))
+                    .collect();
+                list.sort_by_key(|(s, _)| *s);
+                Some(list)
             });
             match found {
-                Some(a) => (200, json!({ "answer": a }).to_string()),
+                Some(list) => {
+                    let arr: Vec<Value> = list
+                        .into_iter()
+                        .map(|(s, a)| json!({ "seat": s, "answer": a }))
+                        .collect();
+                    (200, json!({ "answers": arr }).to_string())
+                }
                 None => (404, json!({ "error": "房间不存在或已过期" }).to_string()),
             }
         }
 
         ("POST", "/api/room") => {
             let v: Value = serde_json::from_str(body).unwrap_or(json!({}));
-            let offer = v.get("offer").and_then(|x| x.as_str()).unwrap_or("");
-            if offer.is_empty() {
-                return (400, json!({ "error": "缺少 offer" }).to_string());
-            }
             // 加个自增序号：同一毫秒里建两个房间也不会撞 id（测试里踩到过）
             static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000;
@@ -285,8 +397,7 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                         rows,
                         max_players,
                         players: 1,          // 一开始只有房主
-                        offer: offer.to_string(),
-                        answer: None,
+                        seats: HashMap::new(), // 座位由房主一个个挂上来
                         seen: now_secs(),
                     },
                 );
@@ -298,6 +409,10 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
             let v: Value = serde_json::from_str(body).unwrap_or(json!({}));
             let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
             let answer = v.get("answer").and_then(|x| x.as_str()).unwrap_or("");
+            let seat = v.get("seat").and_then(|x| x.as_i64()).unwrap_or(0) as i16;
+            if answer.is_empty() {
+                return (400, json!({ "error": "缺少 answer" }).to_string());
+            }
             sweep(rooms);
             let mut code = 200;
             let mut out = json!({ "ok": true });
@@ -307,14 +422,20 @@ fn route(method: &str, target: &str, body: &str, rooms: &Rooms) -> (u16, String)
                         code = 404;
                         out = json!({ "error": "房间不存在或已过期" });
                     }
-                    Some(r) if r.answer.is_some() => {
-                        code = 409;
-                        out = json!({ "error": "这个房间已经有人进去了" });
-                    }
-                    Some(r) => {
-                        r.answer = Some(answer.to_string());
-                        r.seen = now_secs();
-                    }
+                    Some(r) => match r.seats.get_mut(&seat) {
+                        None => {
+                            code = 400;
+                            out = json!({ "error": "这个座位没有对应的 offer" });
+                        }
+                        Some(s) if s.answer.is_some() => {
+                            code = 409;
+                            out = json!({ "error": "这个座位刚被人坐下了" });
+                        }
+                        Some(s) => {
+                            s.answer = Some(answer.to_string());
+                            r.seen = now_secs();
+                        }
+                    },
                 }
             }
             (code, out.to_string())
@@ -526,7 +647,6 @@ pub fn lan_discover(timeout_ms: Option<u64>) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     fn http(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
         let mut s = TcpStream::connect(("127.0.0.1", port)).expect("连不上内嵌服务");
@@ -549,41 +669,117 @@ mod tests {
     }
 
     #[test]
-    fn room_metadata_and_port() {
+    fn room_metadata_and_seats() {
         let port = start(Some(47899)).expect("起服务失败");
         println!("port = {}", port);
         assert_eq!(port, 47899, "房主指定的端口应当被采用");
 
         assert_eq!(http(port, "GET", "/api/ping", "").0, 200);
 
+        // 建房不再需要 offer：座位是房主一个个挂上来的
         let (code, body) = http(
             port,
             "POST",
             "/api/room",
-            r#"{"name":"小王的车队","desc":"随便玩，别撞墙","player":"阿强","offer":"SNK#1.0.0#O#AAA"}"#,
+            r#"{"name":"小王的车队","desc":"随便玩，别撞墙","player":"阿强","cols":30,"rows":15,"maxPlayers":3}"#,
         );
         assert_eq!(code, 200);
         println!("建房返回 = {}", body);
+        let id = serde_json::from_str::<Value>(&body).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // maxPlayers=3 -> 玩家席 1、2；另外挂一个观战席 -1
+        for (seat, tag) in [(1i16, "A"), (2, "B"), (-1, "S")] {
+            let b = format!(
+                r#"{{"id":"{}","seat":{},"offer":"SNK#1.0.0#O#{}"}}"#,
+                id, seat, tag
+            );
+            assert_eq!(http(port, "POST", "/api/offer", &b).0, 200, "挂 offer 失败 seat={}", seat);
+        }
 
         let (_, list) = http(port, "GET", "/api/rooms", "");
         println!("房间列表 = {}", list);
         let v: Value = serde_json::from_str(&list).unwrap();
-        let room = &v["rooms"][0];
+        let room = v["rooms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id.as_str())
+            .unwrap();
         assert_eq!(room["name"], "小王的车队");
         assert_eq!(room["desc"], "随便玩，别撞墙");
         assert_eq!(room["player"], "阿强");
+        assert_eq!(room["maxPlayers"], 3);
         assert_eq!(room["players"], 1);
+        assert_eq!(room["freeSeats"], 2);
+        assert_eq!(room["spectators"], 0);
         assert_eq!(room["taken"], false);
 
+        // 来客取座位：先给玩家席 1
+        let (c1, b1) = http(port, "GET", &format!("/api/offer?id={}", id), "");
+        assert_eq!(c1, 200);
+        println!("取座位 = {}", b1);
+        let v1: Value = serde_json::from_str(&b1).unwrap();
+        assert_eq!(v1["seat"], 1);
+        assert!(v1["offer"].as_str().unwrap().ends_with('A'));
+
+        // 递回答应码；同一个座位再递一次要挡住（409），否则两个人会坐同一条蛇
+        let ans = format!(r#"{{"id":"{}","seat":1,"answer":"SNK#1.0.0#A#X"}}"#, id);
+        assert_eq!(http(port, "POST", "/api/answer", &ans).0, 200);
+        assert_eq!(http(port, "POST", "/api/answer", &ans).0, 409);
+
+        // 房主轮询能看到谁应答了（读不消费，重复拿到也没关系）
+        let (_, ba) = http(port, "GET", &format!("/api/answers?id={}&players=2", id), "");
+        println!("应答列表 = {}", ba);
+        let va: Value = serde_json::from_str(&ba).unwrap();
+        assert_eq!(va["answers"][0]["seat"], 1);
+        assert!(va["answers"][0]["answer"].as_str().unwrap().ends_with('X'));
+        let (_, ba2) = http(port, "GET", &format!("/api/answers?id={}&players=2", id), "");
+        assert_eq!(
+            serde_json::from_str::<Value>(&ba2).unwrap()["answers"][0]["seat"],
+            1,
+            "应答应当可以被重复读到"
+        );
+
+        let (_, list2) = http(port, "GET", "/api/rooms", "");
+        let v2: Value = serde_json::from_str(&list2).unwrap();
+        let room2 = v2["rooms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id.as_str())
+            .unwrap();
+        assert_eq!(room2["players"], 2, "有人应答后人数应当变成 2");
+        assert_eq!(room2["freeSeats"], 1);
+
+        // 下一位拿座位 2；玩家席满了以后再来的人给观战席
+        let (_, b2) = http(port, "GET", &format!("/api/offer?id={}", id), "");
+        assert_eq!(serde_json::from_str::<Value>(&b2).unwrap()["seat"], 2);
+        let ans2 = format!(r#"{{"id":"{}","seat":2,"answer":"SNK#1.0.0#A#Y"}}"#, id);
+        assert_eq!(http(port, "POST", "/api/answer", &ans2).0, 200);
+        let (_, b3) = http(port, "GET", &format!("/api/offer?id={}", id), "");
+        println!("玩家席满了以后 = {}", b3);
+        assert_eq!(
+            serde_json::from_str::<Value>(&b3).unwrap()["seat"],
+            -1,
+            "玩家席满了应当给观战席"
+        );
+
+        // 座位还没挂 offer 就来递答案：明确报错，别把房间搞乱
+        let bad = format!(r#"{{"id":"{}","seat":9,"answer":"SNK#1.0.0#A#Z"}}"#, id);
+        assert_eq!(http(port, "POST", "/api/answer", &bad).0, 400);
+
         // 房间名只填空格时应当退回主机名，不能变成空条目
-        let (_, b2) = http(port, "POST", "/api/room", r#"{"name":"   ","offer":"x"}"#);
-        let id2 = serde_json::from_str::<Value>(&b2).unwrap()["id"]
+        let (_, b4) = http(port, "POST", "/api/room", r#"{"name":"   "}"#);
+        let id2 = serde_json::from_str::<Value>(&b4).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_string();
-        let (_, list2) = http(port, "GET", "/api/rooms", "");
-        let v2: Value = serde_json::from_str(&list2).unwrap();
-        for r in v2["rooms"].as_array().unwrap() {
+        let (_, list3) = http(port, "GET", "/api/rooms", "");
+        let v3: Value = serde_json::from_str(&list3).unwrap();
+        for r in v3["rooms"].as_array().unwrap() {
             if r["id"] == id2.as_str() {
                 println!("空名房间 = {}", r);
                 assert!(!r["name"].as_str().unwrap().is_empty(), "名字不该是空的");

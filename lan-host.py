@@ -34,6 +34,15 @@ rooms = {}
 lock = threading.Lock()
 
 
+def _num(d, key, lo, hi, dflt):
+    """把请求里的数字夹到 [lo, hi]；给不出数就用默认值。座位号允许负数。"""
+    try:
+        v = int(d.get(key, dflt))
+    except Exception:
+        v = dflt
+    return max(lo, min(hi, v))
+
+
 def lan_ip():
     """拿本机在局域网里的地址：连一个外网地址但不真发数据，看内核选了哪张网卡。"""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -73,6 +82,59 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for k in [k for k, v in rooms.items() if now - v["seen"] > ROOM_TTL]:
             rooms.pop(k, None)
 
+    # ---------- 座位小工具 ----------
+    # 每个房间有一张座位表：座位 1..max_players-1 是玩家席，负数（-1、-2…）是观战席。
+    # 房主把每个座位的 offer 挂上来，来客取一个空座位、把 answer 放回去。
+    # 这套规则跟 Rust 侧的 src-tauri/src/lan.rs 一模一样，前端只有一条代码路径。
+    def _free_player_seats(self, r):
+        n = 0
+        for s in range(1, int(r.get("max_players", 2))):
+            st = r["seats"].get(s)
+            if st and not st.get("answer"):
+                n += 1
+        return n
+
+    def _answered_player_seats(self, r):
+        return sum(1 for s, st in r["seats"].items() if s > 0 and st.get("answer"))
+
+    def _spectators(self, r):
+        return sum(1 for s, st in r["seats"].items() if s < 0 and st.get("answer"))
+
+    def _free_spectator_seats(self, r):
+        return sum(1 for s, st in r["seats"].items() if s < 0 and not st.get("answer"))
+
+    def _live_players(self, r):
+        return max(int(r.get("players", 1)), 1 + self._answered_player_seats(r))
+
+    def _take_seat(self, r):
+        """下一个能坐的座位：先玩家席，再观战席；都没有就 None"""
+        for s in range(1, int(r.get("max_players", 2))):
+            st = r["seats"].get(s)
+            if st and not st.get("answer"):
+                return s
+        spec = sorted(
+            [s for s, st in r["seats"].items() if s < 0 and not st.get("answer")],
+            reverse=True,
+        )
+        return spec[0] if spec else None
+
+    def _room_json(self, rid, r):
+        free, free_spec = self._free_player_seats(r), self._free_spectator_seats(r)
+        return {
+            "id": rid,
+            "name": r["name"],
+            "desc": r.get("desc", ""),
+            "player": r.get("player", ""),
+            "cols": r.get("cols", 30),
+            "rows": r.get("rows", 15),
+            "maxPlayers": r.get("max_players", 2),
+            "players": self._live_players(r),
+            "spectators": self._spectators(r),
+            "freeSeats": free,
+            "freeSpectatorSeats": free_spec,
+            "taken": free == 0 and free_spec == 0,
+        }
+
     # ---------- 路由 ----------
     def do_OPTIONS(self):
         self.send_response(204)
@@ -93,35 +155,51 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/rooms":
             with lock:
                 self._sweep()
-                out = [
-                    {"id": k, "name": v["name"], "taken": v["answer"] is not None}
-                    for k, v in rooms.items()
-                ]
+                out = [self._room_json(k, v) for k, v in rooms.items()]
             self._json({"host": HOST_NAME, "rooms": out})
             return
 
         if path == "/api/offer":
+            # 来客取座位：先玩家席，再观战席
             with lock:
                 self._sweep()
                 r = rooms.get(q.get("id", [""])[0])
+                seat, offer, name = None, "", ""
                 if r:
                     r["seen"] = time.time()
+                    seat = self._take_seat(r)
+                    name = r["name"]
+                    if seat is not None:
+                        offer = r["seats"][seat]["offer"]
             if not r:
                 self._json({"error": "房间不存在或已过期"}, 404)
                 return
-            self._json({"name": r["name"], "offer": r["offer"]})
+            if seat is None:
+                self._json({"error": "座位都满了"}, 409)
+                return
+            self._json({"name": name, "seat": seat, "offer": offer})
             return
 
-        if path == "/api/answer":
+        if path == "/api/answers":
+            # 房主轮询：哪些座位有人应答了。故意「读不消费」，由房主按座位去重。
+            reported = q.get("players", [""])[0]
             with lock:
                 self._sweep()
                 r = rooms.get(q.get("id", [""])[0])
+                out = []
                 if r:
                     r["seen"] = time.time()
+                    if reported.isdigit():
+                        r["players"] = max(1, int(reported))
+                    out = [
+                        {"seat": s, "answer": st["answer"]}
+                        for s, st in sorted(r["seats"].items())
+                        if st.get("answer")
+                    ]
             if not r:
                 self._json({"error": "房间不存在或已过期"}, 404)
                 return
-            self._json({"answer": r["answer"] or ""})
+            self._json({"answers": out})
             return
 
         return super().do_GET()
@@ -132,35 +210,67 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/room":
             d = self._body()
-            if not d.get("offer"):
-                self._json({"error": "缺少 offer"}, 400)
-                return
             with lock:
                 self._sweep()
                 rid = "r%d" % int(time.time() * 1000 % 100000000)
                 rooms[rid] = {
-                    "name": (d.get("name") or HOST_NAME)[:24],
-                    "offer": d["offer"],
-                    "answer": None,
+                    "name": (str(d.get("name") or "").strip() or HOST_NAME)[:24],
+                    "desc": str(d.get("desc") or "").strip()[:80],
+                    "player": (str(d.get("player") or "").strip() or HOST_NAME)[:16],
+                    "cols": _num(d, "cols", 10, 60, 30),
+                    "rows": _num(d, "rows", 8, 40, 15),
+                    "max_players": _num(d, "maxPlayers", 2, 6, 2),
+                    "players": 1,
+                    "seats": {},
                     "seen": time.time(),
                 }
             self._json({"id": rid})
             return
 
-        if path == "/api/answer":
+        if path == "/api/offer":
+            # 房主把某个座位的 offer 挂上来
             d = self._body()
+            offer = d.get("offer") or ""
+            if not offer:
+                self._json({"error": "缺少 offer"}, 400)
+                return
             with lock:
                 self._sweep()
                 r = rooms.get(d.get("id", ""))
-                if not r:
-                    self._json({"error": "房间不存在或已过期"}, 404)
-                    return
-                if r["answer"]:
-                    self._json({"error": "这个房间已经有人进去了"}, 409)
-                    return
-                r["answer"] = d.get("answer") or ""
-                r["seen"] = time.time()
+                if r:
+                    r["seen"] = time.time()
+                    r["seats"][_num(d, "seat", -9, 9, 0)] = {
+                        "offer": offer,
+                        "answer": None,
+                    }
+            if not r:
+                self._json({"error": "房间不存在或已过期"}, 404)
+                return
             self._json({"ok": True})
+            return
+
+        if path == "/api/answer":
+            d = self._body()
+            answer = d.get("answer") or ""
+            if not answer:
+                self._json({"error": "缺少 answer"}, 400)
+                return
+            seat = _num(d, "seat", -9, 9, 0)
+            with lock:
+                self._sweep()
+                r = rooms.get(d.get("id", ""))
+                st = r["seats"].get(seat) if r else None
+                if not r:
+                    code, out = 404, {"error": "房间不存在或已过期"}
+                elif st is None:
+                    code, out = 400, {"error": "这个座位没有对应的 offer"}
+                elif st.get("answer"):
+                    code, out = 409, {"error": "这个座位刚被人坐下了"}
+                else:
+                    st["answer"] = answer
+                    r["seen"] = time.time()
+                    code, out = 200, {"ok": True}
+            self._json(out, code)
             return
 
         if path == "/api/close":

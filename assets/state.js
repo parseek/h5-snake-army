@@ -32,11 +32,15 @@ let players;
 let teamMode = 'coop';   // 双人玩法：'coop' | 'vs'
 
 // ------------------------------ 联机 ------------------------------
-// 主机权威：主机跑全部逻辑，客机只发按键、收状态做渲染
-let netRole = null;    // null | 'host' | 'guest'
-let netPC = null;      // RTCPeerConnection
-let netDC = null;      // RTCDataChannel
-let netOpen = false;
+// 主机权威：主机跑全部逻辑，客人只发按键、收状态做渲染。
+// 联机用「座位」模型：座位 0 永远是主机自己，1..netMaxPlayers-1 是客机，
+// -1 是观战。每条 WebRTC 连接 = 一个座位，快照按座位分别发（带一个 you 字段）。
+let netRole = null;       // null | 'host' | 'guest'
+let netPeers = [];        // 每条连接：{ seat, pc, dc, open }
+let netSeat = null;       // 我在主机那边的座位：0 主机自己 / 1..n 客机 / -1 观战
+let netPrimary = null;    // 我自己那条连接（客机 = netPeers[0]；主机 = 刚建的那条）
+let netMaxPlayers = MAX_PLAYERS;   // 本局人数上限（含主机），房主开房时定
+let netOpen = false;      // 客机：通道通了；主机：至少一条通了
 let netLastSend = 0;
 let netBusy = false;
 let netConnTimer = null;

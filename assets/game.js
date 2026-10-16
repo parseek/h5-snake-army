@@ -192,6 +192,48 @@ function widenField(now) {
     syncHud();
 }
 
+// 造第 i 号玩家（0 = 主机 / P1）：左右两侧轮流，同一侧再按序号上下错开。
+// reset() 和「联机中途有人入座」都要用，所以抽出来，别写两遍。
+function makePlayer(i) {
+    const def = PLAYER_DEFS[i];
+    const fromLeft = (i % 2 === 0);
+    const d = fromLeft ? DIRS.right : DIRS.left;
+    const hx = fromLeft ? 4 : COLS - 5;
+    const sideIdx = Math.floor(i / 2);
+    const off = [0, -3, 3, -6, 6, -9][sideIdx] || 0;
+    const hy = Math.max(1, Math.min(ROWS - 2, Math.floor(ROWS / 2) + off));
+    const body = [];
+    for (let k = 0; k < 2; k++) {
+        body.push(cell(hx - d.x * k, hy - d.y * k));
+    }
+    return {
+        def: def,
+        body: body,
+        hp: [SEGMENT_HP, SEGMENT_HP],
+        dir: d,
+        queue: [],
+        acc: 0,
+        stepMs: STEP_MS,
+        boostUntil: 0,
+        coins: 0,
+        score: 0,
+        spawnAt: -1,
+        alive: true,
+        buildRequested: false
+    };
+}
+
+// 联机：对局进行中又有客机入座，把它的蛇补进场上。
+// 座位号必须紧挨着（i === players.length），否则座位与索引就错位了。
+function addPlayerAt(i) {
+    if (!players || i !== players.length || i >= MAX_PLAYERS) return false;
+    const p = makePlayer(i);
+    p.spawnAt = gameNow;      // 播一次出生缩放，客机那边从快照里看到同样的动画
+    players.push(p);
+    syncHud();
+    return true;
+}
+
 function reset() {
     COLS = START_COLS;
     ROWS = START_ROWS;
@@ -204,32 +246,7 @@ function reset() {
     const want = (netArena && netArena.count) || MODES[mode].count;
     const playerCount = Math.max(1, Math.min(want, MAX_PLAYERS));
     for (let i = 0; i < playerCount; i++) {
-        const def = PLAYER_DEFS[i];
-        const fromLeft = (i % 2 === 0);
-        const d = fromLeft ? DIRS.right : DIRS.left;
-        const hx = fromLeft ? 4 : COLS - 5;
-        const sideIdx = Math.floor(i / 2);
-        const off = [0, -3, 3, -6, 6, -9][sideIdx] || 0;
-        const hy = Math.max(1, Math.min(ROWS - 2, Math.floor(ROWS / 2) + off));
-        const body = [];
-        for (let k = 0; k < 2; k++) {
-            body.push(cell(hx - d.x * k, hy - d.y * k));
-        }
-        players.push({
-            def: def,
-            body: body,
-            hp: [SEGMENT_HP, SEGMENT_HP],
-            dir: d,
-            queue: [],
-            acc: 0,
-            stepMs: STEP_MS,
-            boostUntil: 0,
-            coins: 0,
-            score: 0,
-            spawnAt: -1,
-            alive: true,
-            buildRequested: false
-        });
+        players.push(makePlayer(i));
     }
 
     powerUps = { speed: null, widen: null };

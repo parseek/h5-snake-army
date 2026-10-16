@@ -18,21 +18,153 @@ function netSetStatus(main, hint) {
     if (hint !== undefined) netHintEl.textContent = hint;
 }
 
-function netSend(obj) {
-    if (netDC && netOpen) {
-        try { netDC.send(JSON.stringify(obj)); }
+// ------------------------------ 联机：座位表 ------------------------------
+// 座位 0 是主机自己，1..netMaxPlayers-1 是客机，负数（-1、-2…）是观战席。
+// 每条连接 = 一个座位 = 一条 WebRTC 连接。主机把同一帧快照按座位分别发出去，
+// 每份多带一个 you 字段，客机据此知道自己在驱动哪条蛇。
+function netPeerSend(peer, obj) {
+    if (peer && peer.dc && peer.open) {
+        try { peer.dc.send(JSON.stringify(obj)); }
         catch (e) { /* 断了就算了，下一帧还会试 */ }
     }
 }
 
-function netLeave() {
-    if (netDC) { try { netDC.close(); } catch (e) { } }
-    if (netPC) { try { netPC.close(); } catch (e) { } }
-    netDC = null;
-    netPC = null;
+// 客机 → 主机；主机 → 所有客人（广播）。主机要单独发给某人时用 netPeerSend。
+function netSend(obj) {
+    if (netRole === 'host') { netBroadcast(obj); return; }
+    if (netPrimary) netPeerSend(netPrimary, obj);
+}
+
+function netBroadcast(obj) {
+    for (let i = 0; i < netPeers.length; i++) netPeerSend(netPeers[i], obj);
+}
+
+// 快照一人一份：内容一样，只有 you 不同
+function netBroadcastSnapshot(snap) {
+    for (let i = 0; i < netPeers.length; i++) {
+        const peer = netPeers[i];
+        if (!peer.open) continue;
+        netPeerSend(peer, Object.assign({}, snap, { you: peer.seat }));
+    }
+}
+
+function netPeerBySeat(seat) {
+    for (let i = 0; i < netPeers.length; i++) {
+        if (netPeers[i].seat === seat) return netPeers[i];
+    }
+    return null;
+}
+
+// 主机：给新连接挑座位。玩家席发完了就给观战席（-1、-2…）—— 人满了也还能进来看
+function netTakeSeat() {
+    const taken = {};
+    for (let i = 0; i < netPeers.length; i++) taken[netPeers[i].seat] = true;
+    for (let s = 1; s < netMaxPlayers; s++) {
+        if (!taken[s]) return s;
+    }
+    let s = -1;
+    while (taken[s]) s--;
+    return s;
+}
+
+function netGuestCount() {
+    let n = 0;
+    for (let i = 0; i < netPeers.length; i++) {
+        if (netPeers[i].seat > 0 && netPeers[i].open) n++;
+    }
+    return n;
+}
+
+function netSpectatorCount() {
+    let n = 0;
+    for (let i = 0; i < netPeers.length; i++) {
+        if (netPeers[i].seat < 0 && netPeers[i].open) n++;
+    }
+    return n;
+}
+
+// 场上该有几条蛇：座位号最大的那位说了算。
+// 座位号必须连续（players[i] 对应座位 i），所以断开中间一位时人数也跟着降。
+function netWantedPlayers() {
+    let hi = 0;
+    for (let i = 0; i < netPeers.length; i++) {
+        const s = netPeers[i].seat;
+        if (netPeers[i].open && s > hi) hi = s;
+    }
+    return Math.max(1, Math.min(1 + hi, MAX_PLAYERS));
+}
+
+// 观战：只收快照，不发任何操作
+function netSpectating() { return netRole === 'guest' && netSeat !== null && netSeat < 0; }
+
+function netRosterText() {
+    const s = netSpectatorCount();
+    return '玩家 ' + netWantedPlayers() + '/' + netMaxPlayers + (s ? '　观战 ' + s : '');
+}
+
+// netOpen = 我这边好歹通了：客机看自己那条，主机看有没有客人通了
+function netSyncOpen() {
+    if (netRole !== 'host') {
+        netOpen = !!(netPrimary && netPrimary.open);
+        return;
+    }
     netOpen = false;
+    for (let i = 0; i < netPeers.length; i++) {
+        if (netPeers[i].open) { netOpen = true; return; }
+    }
+}
+
+function netDropPeer(peer) {
+    const i = netPeers.indexOf(peer);
+    if (i >= 0) netPeers.splice(i, 1);
+    if (netPrimary === peer) netPrimary = null;
+    peer.open = false;
+    netSyncOpen();
+    syncNetBar();
+}
+
+function netLeave() {
+    for (let i = 0; i < netPeers.length; i++) {
+        const peer = netPeers[i];
+        if (peer.dc) { try { peer.dc.close(); } catch (e) { } }
+        if (peer.pc) { try { peer.pc.close(); } catch (e) { } }
+    }
+    netPeers = [];
+    netPrimary = null;
+    netOpen = false;
+    netSeat = null;
     netRole = null;
     netBusy = false;
+    netHostStage = 'idle';
+    if (netConnTimer) { clearTimeout(netConnTimer); netConnTimer = null; }
+}
+
+// ------------------------------ 联机：场地与人数 ------------------------------
+// 房主开房时定的那份；连接码模式没有房间面板，就给一份默认的宽场地
+let netRoomCfg = null;
+
+function netArenaCfg() {
+    return netRoomCfg || { cols: 30, rows: 15, maxPlayers: MAX_PLAYERS };
+}
+
+// 交给 start() 的场地：人数按实际入座数算
+function netArenaNow(want) {
+    const c = netArenaCfg();
+    return { cols: c.cols, rows: c.rows, maxPlayers: c.maxPlayers, count: want };
+}
+
+// 主机：让场上人数与「已入座的客机数」一致。
+// 还在菜单就开局；打到一半有人进来，就把那条蛇补上。
+function netSyncPlayers() {
+    if (netRole !== 'host') return;
+    const want = netWantedPlayers();
+    if (state === 'menu' || state === 'over' || !players) {
+        start(want > 1 ? 2 : 1, teamMode, netArenaNow(want));
+        return;
+    }
+    while (players.length < want) {
+        if (!addPlayerAt(players.length)) break;
+    }
 }
 
 
@@ -63,21 +195,31 @@ function netWatchIce(pc) {
 }
 
 
-function netBindChannel(dc) {
+// 把一条数据通道接到某个座位上：open / close / message 都记在它自己身上
+function netBindChannel(dc, peer) {
+    peer.dc = dc;
     dc.addEventListener('open', function () {
-        netOpen = true;
+        peer.open = true;
         if (netConnTimer) { clearTimeout(netConnTimer); netConnTimer = null; }
+        netSyncOpen();
         netSetStatus('通道已建立，正在握手…', '');
-        netSend({ t: 'hello', v: APP_VERSION });    // 先对程序版本，再开局
+        netPeerSend(peer, { t: 'hello', v: APP_VERSION });    // 先对程序版本，再开局
     });
     dc.addEventListener('close', function () {
-        netOpen = false;
-        if (state !== 'menu') netSetStatus('连接已断开', '按 Esc 回到模式选择');
+        if (netRole === 'host') {
+            netDropPeer(peer);       // 座位空出来，别人还能进
+            if (state !== 'menu') netSetStatus('有人断开了', netRosterText());
+        } else {
+            peer.open = false;
+            netSyncOpen();
+            if (state !== 'menu') netSetStatus('连接已断开', '按 Esc 回到模式选择');
+        }
+        syncNetBar();
     });
-    dc.addEventListener('message', function (ev) { netOnMessage(ev.data); });
+    dc.addEventListener('message', function (ev) { netOnMessage(ev.data, peer); });
 }
 
-function netOnMessage(raw) {
+function netOnMessage(raw, peer) {
     let m = null;
     try { m = JSON.parse(raw); } catch (e) { return; }
     if (!m) return;
@@ -87,17 +229,35 @@ function netOnMessage(raw) {
         if (m.v !== APP_VERSION) {
             netSetStatus('程序版本不一致：对方 v' + m.v + '，本机 v' + APP_VERSION,
                 '两边打开同一版页面再连');
-            try { netDC.close(); } catch (e) { }
+            try { peer.dc.close(); } catch (e) { }
             return;
         }
         hideStartUi();
         if (netRole === 'host') {
-            netSetStatus('已连接 ✅', '对局开始');
-            start(2, teamMode, netArena);   // 用房主开房时定的场地
+            if (peer.seat === null || peer.seat === undefined) peer.seat = netTakeSeat();
+            // 先告诉对方它坐哪儿，再动对局
+            netPeerSend(peer, {
+                t: 'welcome', seat: peer.seat, v: APP_VERSION,
+                maxPlayers: netMaxPlayers, team: teamMode
+            });
+            netSyncPlayers();      // 座位 1 一到就开局；之后每多一位就补一条蛇
+            netSetStatus('已连接 ✅', netRosterText());
         } else {
             netSetStatus('已连接 ✅', '对局进行中（画面由主机同步）');
-            syncNetBar();
         }
+        syncNetBar();
+        return;
+    }
+
+    // 客机：主机告诉我坐哪儿（座位 < 0 就是观战席）
+    if (m.t === 'welcome') {
+        netSeat = m.seat;
+        if (m.maxPlayers) netMaxPlayers = m.maxPlayers;
+        hideStartUi();
+        netSetStatus('已连接 ✅', netSeat < 0
+            ? '玩家席满了，你在观战席：只能看，不能操作'
+            : '你是第 ' + (netSeat + 1) + ' 位玩家（座位 ' + netSeat + '）');
+        syncNetBar();
         return;
     }
 
@@ -111,17 +271,17 @@ function netOnMessage(raw) {
         return;
     }
 
-    // 主机：把客机的操作喂给 P2
-    if (!players) return;
+    // 主机：把这位客人的操作喂给它自己那条蛇；观战席没有蛇，也就不用理
+    if (!players || !(peer.seat > 0) || !players[peer.seat]) return;
     if (m.t === 'dir') {
-        if (players[1]) turn(players[1], m.dir);
+        turn(players[peer.seat], m.dir);
     } else if (m.t === 'build') {
-        if (players[1]) players[1].buildRequested = true;
+        players[peer.seat].buildRequested = true;
     } else if (m.t === 'ask') {
         // 客机想暂停 / 重开，得主机点头才算 —— 这里只挂个提示
-        netAsk = (m.what === 'restart') ? 'restart' : 'pause';
+        netAsk = { what: (m.what === 'restart') ? 'restart' : 'pause', peer: peer };
         syncNetBar();
-        netBarNote('客机发来请求');
+        netBarNote('座位 ' + peer.seat + ' 发来请求');
     }
 }
 
@@ -130,8 +290,9 @@ function netOnMessage(raw) {
 // 连上以后联机面板就消失了，所以操作全部收拢到这条状态条：
 //   * 主机和客机都能随时「退出连接」
 //   * 客机不能自己暂停 / 重开，只能向主机发请求，由主机点「同意」才算数
-let netAsk = null;         // 主机这边待处理的请求：'pause' | 'restart'
+let netAsk = null;         // 主机这边待处理的请求：{ what: 'pause'|'restart', peer }
 let netNoteTimer = null;
+let netHostStage = 'idle'; // 连接码模式的主机：'idle' | 'offer'（等应答码）| 'done'（可以再加人）
 
 const netBarEl = document.getElementById('netBar');
 
@@ -148,33 +309,39 @@ function syncNetBar() {
     if (!netOpen) return;
 
     const isGuest = netRole === 'guest';
-    document.getElementById('netBarWho').textContent =
-        isGuest ? '联机中 · 我是客机' : '联机中 · 我是主机';
+    const spectating = netSpectating();
+    document.getElementById('netBarWho').textContent = isGuest
+        ? (spectating ? '联机中 · 观战'
+            : netSeat === null ? '联机中 · 我是客机（等主机分配座位）'
+                : '联机中 · 我是客机（座位 ' + netSeat + '）')
+        : '联机中 · 我是主机（' + netRosterText() + '）';
     document.getElementById('netBarState').textContent =
-        state === 'paused' ? '已暂停'
-            : state === 'over' ? '本局结束'
-                : state === 'running' ? '对局进行中' : '';
+        spectating ? '观战中 · 只能看，不能操作'
+            : state === 'paused' ? '已暂停'
+                : state === 'over' ? '本局结束'
+                    : state === 'running' ? '对局进行中' : '';
 
-    // 客机：只有「请求」按钮
+    // 客机（不是观战）：只有「请求」按钮
     const pauseBtn = document.getElementById('netBarPause');
-    pauseBtn.hidden = !isGuest;
+    pauseBtn.hidden = !isGuest || spectating;
     pauseBtn.textContent = state === 'paused' ? '请求继续' : '请求暂停';
-    document.getElementById('netBarRestart').hidden = !isGuest;
+    document.getElementById('netBarRestart').hidden = !isGuest || spectating;
 
-    // 主机：等客机的请求
+    // 主机：等客人的请求
     const showAsk = !isGuest && !!netAsk;
     document.getElementById('netAskText').hidden = !showAsk;
     document.getElementById('netAskOk').hidden = !showAsk;
     document.getElementById('netAskNo').hidden = !showAsk;
     if (showAsk) {
         document.getElementById('netAskText').textContent =
-            netAsk === 'restart' ? '客机请求重开一局' : '客机请求暂停 / 继续';
+            (netAsk.peer && netAsk.peer.seat > 0 ? '座位 ' + netAsk.peer.seat + ' ' : '客机') +
+            (netAsk.what === 'restart' ? '请求重开一局' : '请求暂停 / 继续');
     }
 }
 
-// 客机专用：向主机发请求
+// 客机专用：向主机发请求（观战席没有这个权限）
 function netAskHost(what) {
-    if (!netOpen || netRole !== 'guest') return;
+    if (!netOpen || netRole !== 'guest' || netSpectating()) return;
     netSend({ t: 'ask', what: what });
     netBarNote('已请求，等主机回应…');
 }
@@ -184,51 +351,64 @@ document.getElementById('netBarRestart').addEventListener('click', function () {
 document.getElementById('netBarLeave').addEventListener('click', function () { showMenu(); });
 
 document.getElementById('netAskOk').addEventListener('click', function () {
-    const what = netAsk;
+    const ask = netAsk;
     netAsk = null;
-    if (what === 'restart') start(2, teamMode);
+    if (ask && ask.peer) netPeerSend(ask.peer, { t: 'askOk', what: ask.what, ok: true });
+    if (ask && ask.what === 'restart') start(2, teamMode, netArenaNow(netWantedPlayers()));
     else togglePause();
-    netSend({ t: 'askOk', what: what, ok: true });
     netBarNote('已同意客机的请求');
     syncNetBar();
 });
 
 document.getElementById('netAskNo').addEventListener('click', function () {
-    netSend({ t: 'askOk', what: netAsk, ok: false });
+    if (netAsk && netAsk.peer) netPeerSend(netAsk.peer, { t: 'askOk', what: netAsk.what, ok: false });
     netAsk = null;
     netBarNote('已忽略客机的请求');
     syncNetBar();
 });
 
+// 主机：给下一个座位生成连接码。已经连上的客人不受影响，可以一位一位地加。
+// 玩家席发完之后，再点就是观战码 —— 人满了还能进来看。
 async function netHostCreate() {
-    netLeave();
+    if (netRole !== 'host') netLeave();   // 第一次点「我是主机」：把旧的清干净
     netRole = 'host';
-    netPC = new RTCPeerConnection({ iceServers: netIceServers() });
-    netWatchIce(netPC);
-    netDC = netPC.createDataChannel('snake', { ordered: true });
-    netBindChannel(netDC);
 
-    await netPC.setLocalDescription(await netPC.createOffer());
-    const gatherOk = await netWaitIce(netPC);
+    const peer = { seat: netTakeSeat(), pc: null, dc: null, open: false };
+    netPeers.push(peer);
+    netPrimary = peer;
 
-    netCodeEl.value = netEncode(netPC.localDescription.sdp, 'offer');
-    netSetStatus('① 把下面的连接码发给对方',
-        netDiag(netPC) + netIceWarn(netPC, gatherOk) +
+    peer.pc = new RTCPeerConnection({ iceServers: netIceServers() });
+    netWatchIce(peer.pc);
+    peer.dc = peer.pc.createDataChannel('snake', { ordered: true });
+    netBindChannel(peer.dc, peer);
+
+    await peer.pc.setLocalDescription(await peer.pc.createOffer());
+    const gatherOk = await netWaitIce(peer.pc);
+
+    netCodeEl.value = netEncode(peer.pc.localDescription.sdp, 'offer');
+    netHostStage = 'offer';
+    netSetStatus(peer.seat < 0 ? '① 这是一张观战码（玩家席已经满了）'
+        : '① 这是座位 ' + peer.seat + ' 的连接码',
+        (peer.seat < 0 ? '发给只想看的人　' : '发给第 ' + (peer.seat + 1) + ' 位玩家　') +
+        netDiag(peer.pc) + netIceWarn(peer.pc, gatherOk) +
         '　v' + APP_VERSION + '；② 对方发回应答码后粘到框里点「接受应答码」');
     netUseBtnEl.disabled = false;
     netUseBtnEl.textContent = '接受应答码';
 }
 
 async function netHostAcceptAnswer() {
-    if (!netPC || netRole !== 'host') throw new Error('NO_HOST');
+    const peer = netPrimary;
+    if (!peer || !peer.pc || netRole !== 'host') throw new Error('NO_HOST');
     const d = netDecode(netCodeEl.value, 'answer');
-    await netPC.setRemoteDescription({ type: 'answer', sdp: d.sdp });
-    const patched = netPatchIp(netPC, netPeerIpEl.value.trim());
+    await peer.pc.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+    const patched = netPatchIp(peer.pc, netPeerIpEl.value.trim());
     netSetStatus('已收到应答码，正在打洞…',
         '对方程序版本 v' + d.version + '，与本机一致 ✓' +
         (patched ? '；已按你填的 IP 补了 ' + patched + ' 条候选' : ''));
-    netUseBtnEl.disabled = true;
-    netStartConnectTimer();
+    netHostStage = 'done';
+    netUseBtnEl.disabled = false;
+    netUseBtnEl.textContent = '再让一个人进来';
+    netStartConnectTimer(peer.pc);
 }
 
 async function netGuestAcceptOffer() {
@@ -236,36 +416,40 @@ async function netGuestAcceptOffer() {
     const d = netDecode(netCodeEl.value, 'offer');
     netLeave();
     netRole = 'guest';
-    netPC = new RTCPeerConnection({ iceServers: netIceServers() });
-    netWatchIce(netPC);
-    netPC.addEventListener('datachannel', function (ev) {
-        netDC = ev.channel;
-        netBindChannel(netDC);
+
+    const peer = { seat: null, pc: null, dc: null, open: false };
+    netPeers = [peer];
+    netPrimary = peer;
+
+    peer.pc = new RTCPeerConnection({ iceServers: netIceServers() });
+    netWatchIce(peer.pc);
+    peer.pc.addEventListener('datachannel', function (ev) {
+        netBindChannel(ev.channel, peer);
     });
 
-    await netPC.setRemoteDescription({ type: 'offer', sdp: d.sdp });
-    const patched = netPatchIp(netPC, netPeerIpEl.value.trim());
-    await netPC.setLocalDescription(await netPC.createAnswer());
-    const gatherOk = await netWaitIce(netPC);
+    await peer.pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+    const patched = netPatchIp(peer.pc, netPeerIpEl.value.trim());
+    await peer.pc.setLocalDescription(await peer.pc.createAnswer());
+    const gatherOk = await netWaitIce(peer.pc);
 
-    netCodeEl.value = netEncode(netPC.localDescription.sdp, 'answer');
+    netCodeEl.value = netEncode(peer.pc.localDescription.sdp, 'answer');
     netSetStatus('② 把下面的应答码发回给主机',
-        netDiag(netPC) + netIceWarn(netPC, gatherOk) +
+        netDiag(peer.pc) + netIceWarn(peer.pc, gatherOk) +
         (patched ? '　已按你填的 IP 补了 ' + patched + ' 条候选' : '') +
         '　v' + APP_VERSION + '，对方 v' + d.version + ' ✓');
     netUseBtnEl.disabled = true;
-    netStartConnectTimer();
+    netStartConnectTimer(peer.pc);
 }
 
 // 打洞迟迟不通就说清楚，别让人干等
-function netStartConnectTimer() {
+function netStartConnectTimer(pc) {
     if (netConnTimer) clearTimeout(netConnTimer);
     netConnTimer = setTimeout(function () {
         netConnTimer = null;
         if (netOpen) return;
 
         // 按候选情况分诊，别只丢一句"超时"
-        const c = (netPC && netPC._c) || { host: 0, mdns: 0, srflx: 0, relay: 0 };
+        const c = (pc && pc._c) || { host: 0, mdns: 0, srflx: 0, relay: 0 };
         let why;
         if (!c.srflx && !c.relay) {
             why = '本机压根没拿到公网候选（STUN 不通）：检查网络/防火墙，或在上面填一个能用的 STUN';
@@ -275,7 +459,7 @@ function netStartConnectTimer() {
         } else {
             why = '已经有中继候选还是不通，检查 TURN 的地址和账号密码';
         }
-        netSetStatus('打洞超时了', why + '　（' + netDiag(netPC) + '）');
+        netSetStatus('打洞超时了', why + '　（' + netDiag(pc) + '）');
     }, NET_CONNECT_MS);
 }
 
@@ -361,6 +545,7 @@ function netApplySnapshot(m) {
     gameNow = m.now;
     nowRef = gameNow;
     state = m.st;
+    if (typeof m.you === 'number') netSeat = m.you;   // 主机告诉我坐哪儿（< 0 = 观战）
     mode = m.mode;
     teamMode = m.team;
     best = m.best;
@@ -683,11 +868,15 @@ function lanRenderRooms(rows, listEl, noteEl) {
 
         const info = document.createElement('div');
         info.className = 'info';
+        // 玩家席还有空位就能进；满了还能当观战进去
+        const freeSeats = (typeof r.freeSeats === 'number') ? r.freeSeats : (r.taken ? 0 : 1);
+        const freeSpec = r.freeSpectatorSeats || 0;
         const t1 = document.createElement('span');
         t1.textContent = r.name + '　·　' + (r.player || row.host || '?') +
             '　·　' + (r.players || 1) + '/' + (r.maxPlayers || 2) + ' 人' +
+            (r.spectators ? '（观战 ' + r.spectators + '）' : '') +
             '　·　' + (r.cols || '?') + '×' + (r.rows || '?') +
-            (r.taken ? '（已满）' : '');
+            (freeSeats ? '　空 ' + freeSeats + ' 位' : '　玩家席已满（可观战）');
         info.appendChild(t1);
         if (r.desc) {
             const t2 = document.createElement('span');
@@ -698,8 +887,8 @@ function lanRenderRooms(rows, listEl, noteEl) {
 
         const btn = document.createElement('button');
         btn.className = 'startBtn small';
-        btn.textContent = '进入';
-        btn.disabled = !!r.taken;
+        btn.textContent = freeSeats ? '进入' : '观战';
+        btn.disabled = !freeSeats && !freeSpec;
         btn.addEventListener('click', function () { lanJoin(row.url, r.id); });
         div.appendChild(info);
         div.appendChild(btn);
@@ -707,7 +896,8 @@ function lanRenderRooms(rows, listEl, noteEl) {
     }
 }
 
-// 开房：先照常造 offer，挂到本地信令服务上，然后轮询问答码
+// 开房：先把房间挂到本地信令服务上，再给每个座位造一条连接 + offer 存进去。
+// 玩家席 1..maxPlayers-1，再往后两个观战席；谁先点「进入」谁先坐。
 async function lanOpenRoom() {
     if (netBusy) return;
     netBusy = true;
@@ -718,66 +908,90 @@ async function lanOpenRoom() {
 
         netLeave();
         netRole = 'host';
-        netPC = new RTCPeerConnection({ iceServers: netIceServers() });
-        netWatchIce(netPC);
-        netDC = netPC.createDataChannel('snake', { ordered: true });
-        netBindChannel(netDC);
-        await netPC.setLocalDescription(await netPC.createOffer());
-        // 同一个局域网用不着公网候选，等 2.5 秒就够，别让人干等
-        await netWaitIce(netPC, 2500);
 
-        // 场地由房主定；服务端会限制在合理范围内
+        // 场地 / 人数由房主定；服务端会再夹一次范围
         const clampNum = function (id, lo, hi, dflt) {
             const n = parseInt(document.getElementById(id).value, 10);
             return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
         };
-        const arena = {
+        netRoomCfg = {
             cols: clampNum('roomCols', 10, 60, 30),
             rows: clampNum('roomRows', 8, 40, 15),
-            // 人数上限先记下来、房间信息里也显示，等网络层接上多席位后才真正生效
-            maxPlayers: clampNum('roomMax', 2, 6, 2),
-            count: 2
+            maxPlayers: clampNum('roomMax', 2, 6, 2)
         };
-        netArena = arena;
+        netMaxPlayers = netRoomCfg.maxPlayers;
 
         const made = await lanApi(base, '/api/room', {
             name: document.getElementById('roomName').value.trim(),
             desc: document.getElementById('roomDesc').value.trim(),
             player: document.getElementById('myName').value.trim(),
-            cols: arena.cols,
-            rows: arena.rows,
-            maxPlayers: arena.maxPlayers,
-            offer: netEncode(netPC.localDescription.sdp, 'offer')
+            cols: netRoomCfg.cols,
+            rows: netRoomCfg.rows,
+            maxPlayers: netRoomCfg.maxPlayers
         });
         lanRoom = made.id;
+        lanBase = base;
+
+        const seats = [];
+        for (let s = 1; s < netMaxPlayers; s++) seats.push(s);
+        seats.push(-1, -2);      // 两个观战席
+        await Promise.all(seats.map(function (s) { return lanMakeSeat(base, lanRoom, s); }));
+
         netSetStatus('房间开好了',
             netKind === 'direct' ? '把地址发给对方，让他在「直连」里搜' : '等对方搜到并进入');
-        lanMsgEl.textContent = '房间里已有 1 人（你）。把　' + lanShare +
-            '　发给对方' + (netKind === 'direct' ? '，让他粘到上面的地址框里搜' : '，让他搜房间');
+        lanMsgEl.textContent = '房间里已有 1 人（你）：还空着 ' + (netMaxPlayers - 1) +
+            ' 个玩家席 + 2 个观战席。把　' + lanShare + '　发出去' +
+            (netKind === 'direct' ? '，让他粘到上面的地址框里搜' : '，让他搜房间');
 
         lanStopPolling();
-        lanPoll = setInterval(async function () {
-            if (!lanRoom || netOpen) { lanStopPolling(); return; }
-            try {
-                // 顺带把「现在几个人」报上去，来客在列表里看到的就是实时的
-                const r = await lanApi(base, '/api/answer?id=' + encodeURIComponent(lanRoom) +
-                    '&players=' + players.length);
-                if (!r.answer) return;
-                lanStopPolling();
-                const d = netDecode(r.answer, 'answer');
-                await netPC.setRemoteDescription({ type: 'answer', sdp: d.sdp });
-                netSetStatus('对方已加入，正在打洞…', '通道一开就自动开局');
-                lanMsgEl.textContent = '对方已加入 ✅';
-                netStartConnectTimer();
-            } catch (e) { /* 房间还没人应答，继续轮询 */ }
-        }, 700);
+        lanPoll = setInterval(function () { lanPollSeats(base); }, 700);
     } catch (e) {
         lanMsgEl.textContent = '开房失败：' + e.message;
     }
     netBusy = false;
 }
 
-// 加入：取 offer -> 造 answer -> 递回主机
+// 造一条连接 + 一份 offer，挂到某个座位上
+async function lanMakeSeat(base, id, seat) {
+    const peer = { seat: seat, pc: null, dc: null, open: false };
+    netPeers.push(peer);
+    if (!netPrimary) netPrimary = peer;
+
+    peer.pc = new RTCPeerConnection({ iceServers: netIceServers() });
+    netWatchIce(peer.pc);
+    peer.dc = peer.pc.createDataChannel('snake', { ordered: true });
+    netBindChannel(peer.dc, peer);
+    await peer.pc.setLocalDescription(await peer.pc.createOffer());
+    // 同一个局域网用不着公网候选，等 2.5 秒就够，别让人干等
+    await netWaitIce(peer.pc, 2500);
+    await lanApi(base, '/api/offer', {
+        id: id, seat: seat, offer: netEncode(peer.pc.localDescription.sdp, 'offer')
+    });
+    return peer;
+}
+
+// 轮询：谁把应答递上来了，就把那个座位接上。
+// 取回来的应答是幂等的（服务端不消费），所以「已经接过的连接跳过」就够安全。
+async function lanPollSeats(base) {
+    if (!lanRoom) { lanStopPolling(); return; }
+    try {
+        // 顺带把「现在几个人」报上去，来客在列表里看到的就是实时的
+        const r = await lanApi(base, '/api/answers?id=' + encodeURIComponent(lanRoom) +
+            '&players=' + netWantedPlayers());
+        const list = r.answers || [];
+        for (let i = 0; i < list.length; i++) {
+            const peer = netPeerBySeat(list[i].seat);
+            if (!peer || !peer.pc || peer.pc.currentRemoteDescription) continue;
+            const d = netDecode(list[i].answer, 'answer');
+            await peer.pc.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+            netStartConnectTimer(peer.pc);
+            netSetStatus('有人进来了，正在打洞…', netRosterText());
+        }
+        lanMsgEl.textContent = netRosterText() + '　地址 ' + lanShare;
+    } catch (e) { /* 房间还没人应答，继续轮询 */ }
+}
+
+// 加入：取一个空座位的 offer -> 造 answer -> 递回主机
 async function lanJoin(base, id) {
     try {
         lanMsgEl.textContent = '正在取房间信息…';
@@ -786,21 +1000,26 @@ async function lanJoin(base, id) {
 
         netLeave();
         netRole = 'guest';
-        netPC = new RTCPeerConnection({ iceServers: netIceServers() });
-        netWatchIce(netPC);
-        netPC.addEventListener('datachannel', function (ev) {
-            netDC = ev.channel;
-            netBindChannel(netDC);
-        });
-        await netPC.setRemoteDescription({ type: 'offer', sdp: d.sdp });
-        await netPC.setLocalDescription(await netPC.createAnswer());
-        await netWaitIce(netPC, 2500);
-        await lanApi(base, '/api/answer',
-            { id: id, answer: netEncode(netPC.localDescription.sdp, 'answer') });
+        const peer = { seat: info.seat, pc: null, dc: null, open: false };
+        netPeers = [peer];
+        netPrimary = peer;
 
-        netSetStatus('已把应答递回主机', '通道一开就自动开局');
-        lanMsgEl.textContent = '已加入，等待连接…';
-        netStartConnectTimer();
+        peer.pc = new RTCPeerConnection({ iceServers: netIceServers() });
+        netWatchIce(peer.pc);
+        peer.pc.addEventListener('datachannel', function (ev) {
+            netBindChannel(ev.channel, peer);
+        });
+        await peer.pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+        await peer.pc.setLocalDescription(await peer.pc.createAnswer());
+        await netWaitIce(peer.pc, 2500);
+        await lanApi(base, '/api/answer', {
+            id: id, seat: info.seat, answer: netEncode(peer.pc.localDescription.sdp, 'answer')
+        });
+
+        netSetStatus('已把应答递回主机',
+            info.seat < 0 ? '观战席：通道一开就能看' : '通道一开就自动开局');
+        lanMsgEl.textContent = info.seat < 0 ? '已加入（观战），等待连接…' : '已加入，等待连接…';
+        netStartConnectTimer(peer.pc);
     } catch (e) {
         lanMsgEl.textContent = '加入失败：' + e.message;
     }
@@ -855,6 +1074,11 @@ netGuestBtnEl.addEventListener('click', function () {
 
 netUseBtnEl.addEventListener('click', function () {
     if (netRole === 'host') {
+        // 这一位已经接上了：再点这个按钮就是给下一位造连接码
+        if (netHostStage === 'done') {
+            netHostCreate().catch(function (e) { netSetStatus('出错了', netExplain(e)); });
+            return;
+        }
         netUseBtnEl.disabled = true;
         netHostAcceptAnswer().catch(function (e) {
             netSetStatus('这段码不能用', netExplain(e));
