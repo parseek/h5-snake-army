@@ -142,6 +142,11 @@
             font-size: 14px;
         }
 
+        /* 开始面板里的链接（在线版地址）：默认的蓝色在深底上几乎看不清 */
+        .start a {
+            color: #7fd7ff;
+        }
+
         /* 两个会收缩的弹性空位：有空间就垂直居中，内容超长就从顶部开始滚。
            直接用 justify-content: center 的话溢出时会把顶部切掉。 */
         .start::before,
@@ -496,6 +501,8 @@
                 <button class="startBtn" id="modeBtnV">双人 · 竞争</button>
                 <button class="startBtn" id="modeBtnNet">联机对战</button>
                 <div class="tip">也可以直接按 1 / 2 / 3</div>
+                <div class="tip">在线版：<a href="https://renjisnake.netlify.app/" target="_blank" rel="noreferrer">renjisnake.netlify.app</a>
+                    —— 不想下载的话，把这个地址发给朋友就能一起玩</div>
                 <div class="tip" id="verLine"></div>
             </div>
 
@@ -511,12 +518,15 @@
                 <div class="tip" id="netKindTip"></div>
                 <div class="tip warn" id="netNativeWarn" hidden>
                     ⚠ 当前是<b>浏览器版</b>。<br>
-                    <b>能做的</b>：「直连」可以<b>进别人的房间</b> —— 把对方的地址填进去就行
-                    （对方用桌面版开房）。<br>
+                    <b>能做的</b>：「连接码」手动配对 —— 走 WebRTC 直连，不需要任何服务器；
+                    「直连」也能<b>进别人的房间</b>（把对方开房后显示的地址填进去，对方用桌面版开房）。<br>
                     <b>做不了的</b>：「局域网自动搜房」和「跨网 EasyTier」，
                     以及自己<b>开房</b>。网页不能监听端口、不能收 UDP 广播、也没有 mDNS 浏览 API ——
                     「被别人搜到」这半边浏览器永远做不到；跨网还得能拉起 EasyTier 进程。<br>
-                    这些请用<b>桌面版</b>。想零配置也可以退回「连接码」手动配对。
+                    <b>注意</b>：页面如果是 <b>https://</b> 打开的（比如在线版），浏览器会把
+                    <code>http://192.168.x.x</code> 的请求当<b>混合内容</b>拦掉，「直连」进房会失败
+                    （<code>127.0.0.1</code> 除外，那算可信来源）。https 下能用的就是「连接码」；
+                    想要直连 / 搜房请用<b>桌面版</b>，或者用 <code>file://</code>、本地 http 打开页面。
                 </div>
                 <div class="row" id="netRoleRow">
                     <button class="startBtn small" id="netHostBtn">我是主机</button>

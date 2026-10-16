@@ -10,6 +10,7 @@
     "fetch:easytier": "node scripts/fetch-easytier.mjs",
     "pack": "node scripts/pack-exe.mjs",
     "pack:release": "node scripts/pack-release.mjs",
+    "pack:netlify": "node scripts/pack-netlify.mjs",
     "dev": "tauri dev",
     "build:exe": "tauri build --no-bundle && node scripts/pack-exe.mjs",
     "build": "node scripts/fetch-easytier.mjs && npm run build:exe && node scripts/pack-release.mjs"

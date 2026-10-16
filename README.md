@@ -3,6 +3,25 @@
 一份 **纯静态** 的 Canvas 贪吃蛇。前端不依赖任何框架、构建工具或 Tauri API ——
 既可以用浏览器直接打开（`file://` 也行），也可以套进 Tauri 壳里当桌面程序跑。
 
+## 在线版（什么都不用装）
+
+纯前端那份已经部署好了：**GitHub 仓库 → Netlify** 自动构建，直接打开就能玩：
+
+**<https://renjisnake.netlify.app/>**
+
+只发布 `index.html` + `assets/`，也就是 Tauri 壳之外的那份纯静态页面 —— 和仓库里是同一份代码。
+
+因为它是 `https://` 页面，浏览器会把对 `http://192.168.x.x` 的请求当**混合内容**拦掉，
+所以**在线版上联机只有「连接码」这一条路**（走 WebRTC 直连，不需要任何服务器）。
+想用「直连 / 局域网搜房」请用**桌面版**，或者把页面用 `file://`、本地 http 打开。
+
+更新线上那份有两种办法：
+
+1. **推 GitHub**（推荐）：Netlify 连着 GitHub 仓库，push 上去它自己重建 —— 什么都不用做。
+2. **手动拖**：`npm run pack:netlify` 会生成 `release/netlify/`（目录）和
+   `release/netlify-1.0.0.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
+   不用碰 GitHub。包里只有 `index.html` + `assets/`。
+
 ## 玩法
 
 | 模式 | 说明 |
@@ -10,7 +29,7 @@
 | 单人 | 15×15 场地 |
 | 本地双人 · 合作 | 30×15，队友出局后场上会掉复活道具，活着的人吃到就能救回来 |
 | 本地双人 · 竞争 | 30×15，炮塔会把对方也算进目标，先出局的一方输 |
-| 联机对战 | WebRTC 直连 + 手动交换连接码；程序版本不一致会直接拒绝连接 |
+| 联机对战 | WebRTC 直连，最多 **6 人**同局 + 观战席；一条连接一个座位，程序版本不一致会直接拒绝连接 |
 
 键位：P1 方向键 + `/` 建塔，P2 WASD + `Q` 建塔，
 `P` 暂停，`Esc` 回模式选择。屏幕上也有方向键和建塔按钮（只控 P1）。
@@ -19,7 +38,9 @@
 
 ### 1. 浏览器（零依赖）
 
-双击 `index.html` 即可。想联机的话建议起个 http 服务（`file://` 下 WebRTC 没验证过）：
+不想下载就用上面的[在线版](#在线版什么都不用装)。本地双击 `index.html` 也能玩；
+想联机的话建议起个 http 服务 —— 本地 http 页面既能用「连接码」，也能「直连」进房间
+（`file://` 下 WebRTC 没验证过）：
 
 ```bash
 python -m http.server 8080
@@ -213,6 +234,7 @@ scripts/sync-web.mjs        把前端拷进 dist/
 scripts/serve-dist.mjs      验证用静态服务（带 /__probe 回传口）
 scripts/smoke.mjs           安全地起一个隔离的无头浏览器
 scripts/probe-web.mjs       端到端探针（npm run probe）
+scripts/pack-netlify.mjs    打线上发布包 release/netlify/（npm run pack:netlify）
 scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/
 scripts/fetch-easytier.mjs  下载 EasyTier
 ```
@@ -299,6 +321,8 @@ curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/rel
 
 未验证 / 有前提：
 
+- **在线版（https）上进不了 http 房间**：这是浏览器的混合内容硬限制，不是 bug。
+  https 下能用的只有「连接码」；`127.0.0.1` 算可信来源，所以同机开房仍可直连。
 - **多客机的真实 WebRTC 没在这台机器上验证过**：需要三台以上的真机（或至少两个浏览器
   实例 + 一台开房机）才能把「一条连接一个座位」真跑起来；本机只能验到座位表这一层。
 - **真实的跨网连接没在这台机器上验证过**：EasyTier 建虚拟网卡需要管理员权限，
