@@ -347,6 +347,10 @@ function phase4(w) {
     step('chat-input-guard', function () { return ev(w, 'netLeave(); start(1); var q0 = players[0].queue.length; document.getElementById("chatInput").dispatchEvent(new KeyboardEvent("keydown", { key: "w", bubbles: true })); players[0].queue.length - q0'); });
     step('chat-html-safe', function () { return ev(w, 'chatLog.length = 0; toggleChat(true); chatPush("坏", "<img src=x onerror=1>", false); var row = document.getElementById("chatList").lastChild; row.querySelectorAll("img").length + "/" + (row.innerHTML.indexOf("&lt;img") >= 0)'); });
 
+    // 建塔按钮：联机时要显示「我」那条蛇
+    step('build-btn-mine', function () { return ev(w, 'netRole = "guest"; netSeat = 2; while (players.length < 3) addPlayerAt(players.length); syncBuildBtn(); document.getElementById("buildBtn0").textContent.slice(0, 8) + "/" + document.getElementById("buildBtn1").style.display'); });
+    step('build-btn-spectator', function () { return ev(w, 'netSeat = -1; syncBuildBtn(); document.getElementById("buildBtn0").style.display + "/" + document.getElementById("buildBtn1").style.display'); });
+
     report.phases.seats = {
         maxPlayers: ev(w, 'MAX_PLAYERS'),
         wanted: ev(w, 'netWantedPlayers()'),

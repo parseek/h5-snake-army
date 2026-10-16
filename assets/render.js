@@ -668,6 +668,15 @@ function syncPauseBtn() {
     pauseBtnEl.classList.toggle('is-off', state !== 'running' && state !== 'paused');
 }
 
+// 「我」控制的是哪条蛇：联机客机是主机分配的座位（可能 >0），
+// 本地单人和联机主机都是 0，观战席没有蛇（-1）
+function mySeatIndex() {
+    if (netRole === 'guest') {
+        return (netSeat === null || netSeat < 0) ? -1 : netSeat;
+    }
+    return 0;
+}
+
 // 身长不够 / 到上限时按钮变灰
 let buildBtnLabels = ['', ''];
 function syncBuildBtn() {
@@ -675,16 +684,27 @@ function syncBuildBtn() {
     const pad2 = document.getElementById('pad2');
     if (pad2) pad2.hidden = !dualLocal();
 
+    const dual = dualLocal();
+    const mine = mySeatIndex();
+
     for (let i = 0; i < buildBtnEls.length; i++) {
-        // 单人模式下把 P2 那个按钮收起来
-        if (i >= players.length) {
+        // 本地双人：按钮 i 就是玩家 i，两个都摆出来。
+        // 其它情况（单人 / 联机主机 / 联机客机）只留一个按钮，而且它必须显示
+        // 「我」那条蛇 —— 联机客机的座位可能是 3、4、5，以前写死 P1/P2，
+        // 客机看到的永远不是自己；观战席则一个按钮都不该有。
+        const idx = dual ? i : mine;
+        const show = dual ? (i < players.length) : (i === 0 && idx >= 0 && !!players[idx]);
+        if (!show) {
             buildBtnEls[i].style.display = 'none';
             continue;
         }
-        const p = players[i];
+        const p = players[idx];
         buildBtnEls[i].style.display = '';
 
-        const label = p.def.name + ' 建塔[' + p.def.buildKey + '] −' + TURRET_COST +
+        // 联机时写「我（P3）」并去掉键位提示 —— 客机那边键位和座位对不上
+        const who = dual ? p.def.name : (netRole ? '我（' + p.def.name + '）' : p.def.name);
+        const key = (dual || !netRole) ? '[' + p.def.buildKey + ']' : '';
+        const label = who + ' 建塔' + key + ' −' + TURRET_COST +
             '身长 −' + TURRET_COIN_COST + '币　' + turretCount(p) + '/' + TURRET_MAX;
         if (label !== buildBtnLabels[i]) {
             buildBtnEls[i].textContent = label;
