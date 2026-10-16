@@ -18,7 +18,8 @@ const LEVEL_FIELDS = [
     { key: 'stepMs', label: '每步间隔', type: 'num', min: 50, max: 1200, step: 10, hint: '毫秒，越小越快' },
 
     { sec: '场上刷什么' },
-    { key: 'apples', label: '同屏苹果', type: 'num', min: 1, max: 12, unit: '个' },
+    { key: 'appleBase', label: '开局苹果', type: 'num', min: 1, max: 200, hint: '个（之后随时间涨）' },
+    { key: 'apples', label: '苹果上限', type: 'num', min: 1, max: 200, unit: '个' },
     { key: 'enemies', label: '敌人', type: 'bool' },
     { key: 'enemyMax', label: '敌人上限', type: 'num', min: 1, max: 12, unit: '条' },
     { key: 'enemyGap', label: '敌人补位', type: 'num', min: 500, max: 60000, step: 500, hint: '毫秒' },
@@ -27,6 +28,9 @@ const LEVEL_FIELDS = [
     { key: 'boostMs', label: '加速时长', type: 'num', min: 1000, max: 120000, step: 1000, hint: '毫秒' },
     { key: 'powerGap', label: '道具刷新', type: 'num', min: 10, max: 250, step: 5, hint: '%，越小越快' },
     { key: 'revive', label: '复活道具', type: 'bool' },
+    { key: 'cutWall', label: '撞墙剪短', type: 'num', min: 0, max: 10, hint: '节（0 = 撞死）' },
+    { key: 'cutSnake', label: '撞蛇剪短', type: 'num', min: 0, max: 10, hint: '节（0 = 撞死）' },
+    { key: 'invMs', label: '剪短后无敌', type: 'num', min: 0, max: 10000, step: 500, hint: '毫秒（0 = 不给）' },
 
     { sec: '炮塔' },
     { key: 'turretCost', label: '建塔耗身长', type: 'num', min: 1, max: 10, unit: '节' },
@@ -296,8 +300,10 @@ const LEVEL_PRESETS = [
     { id: 'classic', name: '经典', note: '默认那套：15×15 慢慢吃', cfg: {} },
     { id: 'brawl', name: '大乱斗', note: '80×40 快节奏，满场敌人和苹果',
       cfg: { cols: 80, rows: 40, stepMs: 380, apples: 8, enemyMax: 12, enemyGap: 3000, turretMax: 8 } },
-    { id: 'survive', name: '生存', note: '40×30，血厚、苹果少、敌人不断补',
-      cfg: { cols: 40, rows: 30, stepMs: 450, hp0: 3, apples: 2, enemyMax: 8, enemyGap: 3000, turretMax: 2 } },
+    { id: 'survive', name: '生存', note: '40×30，血厚、苹果少、敌人不断补；撞墙 / 撞蛇各剪短 3 节',
+      cfg: { cols: 40, rows: 30, stepMs: 450, hp0: 3, apples: 2, enemyMax: 8, enemyGap: 3000, turretMax: 2,
+        // 撞了不是直接死，而是从头部剪掉 3 节（剪到最短 2 节还短就死）
+        cutWall: 3, cutSnake: 3 } },
     { id: 'practice', name: '空场练习', note: '30×20，没有敌人，专心练手感',
       cfg: { cols: 30, rows: 20, enemies: false, apples: 6, stepMs: 300, turretMax: 6 } },
     { id: 'giant', name: '巨幕', note: '200×150 大地图，镜头跟着你走',
@@ -305,7 +311,9 @@ const LEVEL_PRESETS = [
     { id: 'rail', name: '高铁大陆', note: '200×150 极速：玩家 100ms、敌人 5 倍速、道具各 4 个',
       cfg: { cols: 200, rows: 150, stepMs: 100, enemySpeed: 500, enemyGap: 3000, apples: 12, enemyMax: 12, turretMax: 12,
         // 道具量：总倍率 25%（默认的 4 倍频）+ 每种同屏 4 个（原来是各 1 个）
-        powerGap: 25, i_speed_max: 4, i_widen_max: 4 } },
+        powerGap: 25, i_speed_max: 4, i_widen_max: 4,
+        // 苹果：原来的 12 个 → 10 倍（开局就摆 120 个，上限也是 120）
+        appleBase: 120, apples: 120 } },
     { id: 'blitz', name: '闪电战', note: '180ms 一步、1 血，撞一下就出局',
       cfg: { stepMs: 180, hp0: 1, apples: 4, enemyMax: 4, turretCost: 1 } }
 ];
@@ -644,12 +652,16 @@ function levelToBytes(cfg) {
     out.push(clampByte(val('len0')));
     out.push(clampByte(val('hp0')));
     u16(val('stepMs') / 10);
+    out.push(clampByte(val('appleBase')));
     out.push(clampByte(val('apples')));
     out.push(clampByte(val('enemyMax')));
     u16(val('enemySpeed'));
     u16(val('enemyGap') / 500);
     u16(val('boostMs') / 1000);
     out.push(clampByte(val('powerGap')));
+    out.push(clampByte(val('cutWall')));
+    out.push(clampByte(val('cutSnake')));
+    u16(val('invMs') / 100);
     out.push((val('i_speed_on') ? 1 : 0) | (val('i_widen_on') ? 2 : 0));
     u16(val('i_speed_gap') / 100);
     out.push(Math.max(1, Math.min(9, Math.round(val('i_speed_max')))));
@@ -672,7 +684,7 @@ function bytesToLevel(bytes) {
     const need = function (n) { if (p + n > bytes.length) throw new Error('短码不完整'); };
     const u8 = function () { need(1); return bytes[p++]; };
     const u16 = function () { need(2); const a = bytes[p++]; return a | (bytes[p++] << 8); };
-    if (bytes.length < 31) throw new Error('短码太短');
+    if (bytes.length < 36) throw new Error('短码太短');
     const cfg = {};
     cfg.cols = u16();
     cfg.rows = u16();
@@ -685,12 +697,16 @@ function bytesToLevel(bytes) {
     cfg.len0 = u8();
     cfg.hp0 = u8();
     cfg.stepMs = u16() * 10;
+    cfg.appleBase = u8();
     cfg.apples = u8();
     cfg.enemyMax = u8();
     cfg.enemySpeed = u16();
     cfg.enemyGap = u16() * 500;
     cfg.boostMs = u16() * 1000;
     cfg.powerGap = u8();
+    cfg.cutWall = u8();
+    cfg.cutSnake = u8();
+    cfg.invMs = u16() * 100;
     const itemFlags = u8();
     cfg.i_speed_on = !!(itemFlags & 1);
     cfg.i_widen_on = !!(itemFlags & 2);

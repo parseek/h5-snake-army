@@ -298,6 +298,9 @@ function netOnMessage(raw, peer) {
         turn(players[peer.seat], m.dir);
     } else if (m.t === 'build') {
         players[peer.seat].buildRequested = true;
+    } else if (m.t === 'upgrade') {
+        // 客机点了升级按钮：记在它自己那条蛇上，帧循环里替它升
+        players[peer.seat].upgradeRequested = (m.path === 'B') ? 'B' : 'A';
     } else if (m.t === 'ask') {
         // 客机想暂停 / 重开，得主机点头才算 —— 这里只挂个提示
         netAsk = { what: (m.what === 'restart') ? 'restart' : 'pause', peer: peer };
@@ -544,6 +547,46 @@ function netApplyCfg(cfg) {
     if (TEAM_MODES[cfg.team]) teamMode = cfg.team;
 }
 
+// 主机：把「还没发过的」剪短动画打包给客机（一次性事件，发过就不再发）
+let netCutSentId = 0;
+
+function netPackCuts() {
+    if (!cutFx || !cutFx.length) return null;
+    const out = [];
+    for (let i = 0; i < cutFx.length; i++) {
+        const fx = cutFx[i];
+        if (fx.id <= netCutSentId) continue;
+        const flat = [];
+        for (let k = 0; k < fx.cells.length; k++) flat.push(fx.cells[k].x, fx.cells[k].y);
+        out.push({ i: players.indexOf(fx.owner), c: flat, h: fx.hp, d: [fx.dir.x, fx.dir.y] });
+        netCutSentId = Math.max(netCutSentId, fx.id);
+    }
+    return out.length ? out : null;
+}
+
+// 客机：照着主机说的，在本地放一遍同样的动画
+function netApplyCuts(list) {
+    if (!list || !list.length) return;
+    if (!cutFx) cutFx = [];
+    for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        const p = players[c.i] || players[0];
+        const cells = [];
+        for (let k = 0; k < c.c.length; k += 2) cells.push({ x: c.c[k], y: c.c[k + 1] });
+        if (!cells.length) continue;
+        cutFx.push({
+            id: ++cutFxSeq,
+            cells: cells,
+            hp: c.h || cells.map(function () { return levelCfg.hp0; }),
+            dir: { x: c.d[0], y: c.d[1] },
+            at: gameNow,
+            bodyColor: p.def.body,
+            headColor: p.def.head
+        });
+        while (cutFx.length > 6) cutFx.shift();
+    }
+}
+
 function netSnapshot() {
     return {
         t: 'state',
@@ -559,6 +602,7 @@ function netSnapshot() {
         mode: mode, team: teamMode, best: best,
         // 关卡配置整个带过去：客机只读，面板上照着显示
         cfg: netPackCfg(),
+        cut: netPackCuts(),        // 刚被剪短的头颈（客机照着放缩回动画）
         pl: players.map(function (p, i) {
             return {
                 i: i,
@@ -567,6 +611,7 @@ function netSnapshot() {
                 d: p.dir, q: p.queue,
                 acc: netRound(p.acc), sm: p.stepMs,
                 bu: p.boostUntil ? Math.round(p.boostUntil) : 0,
+        iv: p.invUntil ? Math.round(p.invUntil) : 0,
                 c: p.coins, s: p.score,
                 sa: Math.round(p.spawnAt),
                 al: p.alive
@@ -593,7 +638,8 @@ function netSnapshot() {
         rv: reviveItem ? [reviveItem.x, reviveItem.y] : null,
         dr: drops.map(function (d) { return [d.x, d.y, d.kind === 'len' ? 1 : 0, Math.round(d.expireAt)]; }),
         tu: turrets.map(function (t) {
-            return [t.x, t.y, players.indexOf(t.owner), Math.round(t.cooldownUntil)];
+            // 末尾两个是升级等级（A 跟踪 / B 火力），客机照着画小点
+            return [t.x, t.y, players.indexOf(t.owner), Math.round(t.cooldownUntil), t.upA || 0, t.upB || 0];
         }),
         bl: bullets.map(function (b) { return [netRound(b.x), netRound(b.y), b.from === 'enemy' ? 1 : 0]; }),
         co: corpses.map(function (c) {
@@ -612,6 +658,7 @@ function netApplySnapshot(m) {
     mode = m.mode;
     teamMode = m.team;
     netApplyCfg(m.cfg);                // 关卡配置：客机只照着显示，逻辑仍在主机那边跑
+    netApplyCuts(m.cut);               // 剪短动画：主机放什么，客机也放什么
     best = m.best;
 
     if (COLS !== m.cols || ROWS !== m.rows) {
@@ -633,9 +680,9 @@ function netApplySnapshot(m) {
         return {
             def: PLAYER_DEFS[p.i],
             body: netUnpackBody(p.b), hp: p.hp, dir: p.d, queue: p.q,
-            acc: p.acc, stepMs: p.sm, boostUntil: p.bu,
+            acc: p.acc, stepMs: p.sm, boostUntil: p.bu, invUntil: p.iv || 0,
             coins: p.c, score: p.s, spawnAt: p.sa, alive: p.al,
-            buildRequested: false
+            buildRequested: false, upgradeRequested: false, invUntil: p.iv || 0
         };
     });
 
@@ -658,7 +705,8 @@ function netApplySnapshot(m) {
         return { x: d[0], y: d[1], kind: d[2] ? 'len' : 'coin', expireAt: d[3] };
     });
     turrets = m.tu.map(function (t) {
-        return { x: t[0], y: t[1], cooldownUntil: t[3], owner: players[t[2]] || players[0] };
+        return { x: t[0], y: t[1], cooldownUntil: t[3], owner: players[t[2]] || players[0],
+            upA: t[4] || 0, upB: t[5] || 0 };
     });
     bullets = m.bl.map(function (b) {
         return { x: b[0], y: b[1], vx: 0, vy: 0, from: b[2] ? 'enemy' : 'player' };

@@ -603,9 +603,18 @@
             width: 100%;
         }
 
+        .operate .duo {
+            flex-wrap: wrap;
+        }
+
+        /* 升级 / 设置 / 聊天四个挤在一排：桌面一行两个，手机一行四个 */
         .operate .duo .btn {
-            flex: 1;
-            font-size: 13px;
+            flex: 1 1 40%;
+            min-width: 0;
+            padding: 6px 2px;
+            font-size: 12px;
+            line-height: 1.25;
+            white-space: normal;
         }
 
         /* 聊天：贴底的抽屉（在 .start 浮层之下，那层 z-index 是 50） */
@@ -791,6 +800,13 @@
                 font-size: 12px;
             }
 
+            /* 手机上四个小按钮排一行，别把操作区撑高（一屏就放不下了） */
+            .operate .duo .btn {
+                flex: 1 1 0;
+                font-size: 11px;
+                padding: 6px 1px;
+            }
+
             /* 开局后把长篇帮助收起来，让「棋盘 + 操作区」塞得进一屏 */
             body.playing .desc {
                 display: none;
@@ -877,8 +893,11 @@
                 <div class="levelInfo" id="levelInfo"></div>
                 <button class="startBtn ghost" id="levelBtnStart">🛠 关卡修改器</button>
                 <div class="tip">也可以直接按 1 / 2 / 3</div>
-                <div class="tip">在线版：<a href="https://renjisnake.netlify.app/" target="_blank" rel="noreferrer">renjisnake.netlify.app</a>
-                    —— 不想下载的话，把这个地址发给朋友就能一起玩</div>
+                <div class="tip">源码与发行版：
+                    <a href="https://gitee.com/nxbznine_bilibili/h5-snake-army" target="_blank" rel="noreferrer">Gitee</a>
+                    ·
+                    <a href="https://github.com/parseek/h5-snake-army" target="_blank" rel="noreferrer">GitHub</a>
+                </div>
                 <div class="tip" id="verLine"></div>
             </div>
 
@@ -1049,9 +1068,12 @@
                 <div class="btn" data-dir="right">右</div>
                 <div class="btn build flex" id="buildBtn0">P1 建塔 · 身长 −2</div>
                 <div class="btn pause flex" id="pauseBtn">暂停</div>
+                <!-- 炮塔升级：A = 跟踪，B = 速度/力量/射程，升级「离蛇头最近的那座自己的塔」 -->
                 <div class="duo">
-                    <div class="btn" id="cfgBtn">⚙ 设置</div>
-                    <div class="btn" id="chatBtn">💬</div>
+                    <div class="btn" id="upABtn0" title="升级最近的塔：跟踪">A 跟踪</div>
+                    <div class="btn" id="upBBtn0" title="升级最近的塔：速度 / 力量 / 射程">B 火力</div>
+                    <div class="btn" id="cfgBtn" title="关卡修改器">⚙</div>
+                    <div class="btn" id="chatBtn" title="聊天">💬</div>
                 </div>
             </div>
             <!-- P2 的方向键：只在「本地双人」时出现；手机上两人各按各的 -->
@@ -1061,6 +1083,10 @@
                 <div class="btn" data-dir2="down">下</div>
                 <div class="btn" data-dir2="right">右</div>
                 <div class="btn build flex" id="buildBtn1">P2 建塔 · 身长 −2</div>
+                <div class="duo">
+                    <div class="btn" id="upABtn1">A 跟踪</div>
+                    <div class="btn" id="upBBtn1">B 火力</div>
+                </div>
             </div>
         </div>
 
@@ -1186,6 +1212,11 @@ if (state === 'running') {
             buildTurret(p);
         }
 
+        if (p.upgradeRequested) {
+            upgradeTurret(p, p.upgradeRequested);
+            p.upgradeRequested = false;
+        }
+
         expirePlayerBoost(p, now);
 
         // 每帧最多累积一个步长：切到后台再回来不会瞬间追帧
@@ -1206,11 +1237,8 @@ if (state === 'running') {
         }
     }
 
-    // 苹果按难度补足
-    const wantApples = appleTargetCount(now);
-    while (apples.length < wantApples) {
-        if (!spawnApple()) break;
-    }
+    // 苹果按难度补足（每帧限量补，开局上百个也不会卡）
+    fillApples(now, 4);
 
     // 敌人蛇：补位 / 难度爬升 / 各自按自己的节奏走
     updateEnemySpawns(now);

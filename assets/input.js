@@ -175,6 +175,34 @@ for (let i = 0; i < buildBtnEls.length; i++) {
     })(i);
 }
 
+// 炮塔升级（只给按钮，先不接键盘）：A = 跟踪，B = 火力
+function localUpgrade(path) {
+    if (netRole === 'guest') {                 // 客机：让主机替自己升
+        netSend({ t: 'upgrade', path: path });
+        return;
+    }
+    if (state !== 'running' || !players || !players[0]) return;
+    upgradeTurret(players[0], path);
+}
+
+for (let i = 0; i < upABtnEls.length; i++) {
+    (function (idx) {
+        const wire = function (btn, path) {
+            if (!btn) return;
+            btn.addEventListener('click', function () {
+                tapFeedback();
+                if (dualLocal()) {
+                    if (players[idx]) players[idx].upgradeRequested = path;
+                } else {
+                    localUpgrade(path);
+                }
+            });
+        };
+        wire(upABtnEls[idx], 'A');
+        wire(upBBtnEls[idx], 'B');
+    })(i);
+}
+
 // 房间里也能点开设置 / 聊天（手机上主要靠这两个按钮）
 document.getElementById('cfgBtn').addEventListener('click', function () { tapFeedback(); toggleCfgPanel(); });
 document.getElementById('chatBtn').addEventListener('click', function () { tapFeedback(); toggleChat(); });

@@ -66,7 +66,9 @@ let enemies;        // 敌人蛇数组 [{ body, dir, acc, stepMs, spawnAt, boost
 let enemyRespawns;  // 待补位的重生时间点
 let runStartAt;     // 本局开始时间，用来爬难度
 let drops;          // 敌人尸体掉落物 [{ x, y, kind, expireAt }]
-let corpses;        // 正在播阵亡动画的蛇 [{ body, hp, dir, diedAt, loot, bodyColor, headColor }]
+let corpses;
+let cutFx;         // 剪短动画：被剪掉的头颈往回缩的残留效果 [{id, cells, hp, dir, at, bodyColor, headColor}]
+let cutFxSeq = 0;  // 流水号：联机时主机靠它知道哪几条还没发给客机        // 正在播阵亡动画的蛇 [{ body, hp, dir, diedAt, loot, bodyColor, headColor }]
 let nowRef;         // 本帧时间，画动画时用
 let turrets;        // 炮塔 [{ x, y, cooldownUntil, owner }]
 let bullets;        // 子弹 [{ x, y, vx, vy }]，坐标是浮点格

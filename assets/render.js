@@ -434,8 +434,14 @@ function drawBoostGlow(pts, color) {
     ctx.restore();
 }
 
+// 无敌期间每隔 120ms 藏一下自己：一眼能看出「现在撞不死」
+function snakeBlinking(p) {
+    return invincible(p, gameNow) && (Math.floor(gameNow / 120) % 2 === 0);
+}
+
 function drawSnake(p) {
     if (!p.alive || p.body.length === 0) return;
+    if (snakeBlinking(p)) return;      // 无敌闪烁
 
     const head = p.body[0];
     const s = spawnScale(p.spawnAt, nowRef);
@@ -465,6 +471,42 @@ function drawReviveItem() {
     const w = r * 0.34;
     ctx.fillRect(cx - w / 2, cy - r * 0.6, w, r * 1.2);
     ctx.fillRect(cx - r * 0.6, cy - w / 2, r * 1.2, w);
+}
+
+// ------------------------------ 剪短动画 ------------------------------
+// 「头缩回去」：被剪掉的头颈从原来的位置往回缩进身体，边缩边淡出。
+// 偏移和缩放拆成两个小函数，方便直接测（动画本身没法用像素断言）。
+function cutFxK(fx, now) {
+    return Math.max(0, Math.min(1, (now - fx.at) / CUT_FX_MS));
+}
+
+// 往回缩多少格：0 -> 1.35 格，方向与蛇的行进方向相反
+function cutFxOffset(fx, now) {
+    const k = cutFxK(fx, now);
+    const back = easeOutCubic(k) * CELL * 1.35;
+    return { x: -fx.dir.x * back, y: -fx.dir.y * back };
+}
+
+// 越缩越小、越淡
+function cutFxScale(fx, now) {
+    return 1 - easeInCubic(cutFxK(fx, now));
+}
+
+function drawCutFx() {
+    if (!cutFx) return;
+    for (let i = cutFx.length - 1; i >= 0; i--) {
+        const fx = cutFx[i];
+        if (cutFxK(fx, gameNow) >= 1) {
+            cutFx.splice(i, 1);
+            continue;
+        }
+        const off = cutFxOffset(fx, gameNow);
+        const pts = buildPath(fx.cells, fx.dir, 0, false);
+        ctx.save();
+        ctx.translate(off.x, off.y);
+        strokeSnake(pts, fx.cells, fx.hp, fx.bodyColor, fx.headColor, fx.dir, cutFxScale(fx, gameNow));
+        ctx.restore();
+    }
 }
 
 function drawCorpses() {
@@ -716,6 +758,7 @@ function render() {
     drawCorpses();
     drawEnemy();
     for (let i = 0; i < players.length; i++) drawSnake(players[i]);
+    drawCutFx();                   // 被剪掉的头颈往回缩（画在蛇上面）
     if (growing) ctx.restore();
 
     drawOffscreenHints();          // 屏幕外的目标给个小圆点，画在遮罩下面
@@ -759,6 +802,30 @@ function drawTurrets() {
         ctx.beginPath();
         ctx.arc(cx, cy, CELL * 0.15, 0, Math.PI * 2);
         ctx.fill();
+
+        // 升级等级：塔下排小点，蓝 = A 跟踪，橙 = B 火力
+        const lvA = upgradeLevel(t, 'A');
+        const lvB = upgradeLevel(t, 'B');
+        if (lvA || lvB) {
+            const r = CELL * 0.09;
+            const step = r * 2.6;
+            let x = cx - step * (lvA + lvB - 1) / 2;
+            const y = cy + CELL * 0.42;
+            for (let k = 0; k < lvA; k++) {
+                ctx.fillStyle = '#4aa3ff';
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+                x += step;
+            }
+            for (let k = 0; k < lvB; k++) {
+                ctx.fillStyle = '#ffb703';
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+                x += step;
+            }
+        }
     }
 }
 
@@ -838,5 +905,55 @@ function syncBuildBtn() {
             buildBtnLabels[i] = label;
         }
         buildBtnEls[i].classList.toggle('is-off', !canBuild(p));
+    }
+
+    syncUpgradeBtns();
+}
+
+// 升级按钮：显示「离我最近那座塔」的等级和下一级价格；
+// 没塔 / 已满级 / 币不够就变灰，客机只读文案（点了发给主机）。
+function syncUpgradeBtns() {
+    const dual = dualLocal();
+    const mine = mySeatIndex();
+
+    for (let i = 0; i < upABtnEls.length; i++) {
+        const idx = dual ? i : mine;
+        const show = dual ? (i < players.length) : (i === 0 && idx >= 0 && !!players[idx]);
+        const btnA = upABtnEls[i];
+        const btnB = upBBtnEls[i];
+        if (!btnA || !btnB) continue;
+
+        if (!show) {
+            btnA.style.display = 'none';
+            btnB.style.display = 'none';
+            continue;
+        }
+        btnA.style.display = '';
+        btnB.style.display = '';
+
+        const p = players[idx];
+        const t = nearestTurret(p);
+        const pair = [[btnA, 'A'], [btnB, 'B']];
+        for (let k = 0; k < pair.length; k++) {
+            const btn = pair[k][0];
+            const path = pair[k][1];
+            const name = (path === 'A') ? '跟踪' : '火力';
+            let label;
+            let off = true;
+            if (!t) {
+                label = path + ' ' + name + ' · 先建塔';
+            } else {
+                const lv = upgradeLevel(t, path);
+                const cost = upgradeCost(t, path);
+                if (cost < 0) {
+                    label = path + ' ' + name + ' ' + lv + '/' + TURRET_UP_MAX + ' 满';
+                } else {
+                    label = path + ' ' + name + ' ' + lv + '→' + (lv + 1) + ' · ' + cost + '币';
+                    off = !canUpgrade(p, path);
+                }
+            }
+            if (btn.textContent !== label) btn.textContent = label;
+            btn.classList.toggle('is-off', off);
+        }
     }
 }

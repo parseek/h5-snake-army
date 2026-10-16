@@ -141,6 +141,16 @@ function pickCell(free) {
 }
 
 // 放一个苹果；放不下就返回 false
+// 把苹果补到目标数量。每帧只补 maxPerTick 个 ——
+// 关卡里把苹果设成上百个时，一帧全补上会明显卡一下（每个都要扫一遍全网格）。
+function fillApples(now, maxPerTick) {
+    const want = appleTargetCount(now);
+    let budget = Math.max(1, maxPerTick || 1);
+    while (apples.length < want && budget-- > 0) {
+        if (!spawnApple()) break;
+    }
+}
+
 function spawnApple() {
     // 先收集所有空格再随机取一个：场地被填满时也不会像递归那样死循环
     const spot = pickCell(freeCells());
@@ -151,8 +161,9 @@ function spawnApple() {
 
 // 当前应该同时存在几个苹果：存活时间 / 得分取较大者，越后期越多
 function appleTargetCount(now) {
-    const byTime = APPLE_BASE + Math.floor(Math.max(0, now - runStartAt) / (APPLE_RAMP_SEC * 1000));
-    const byScore = APPLE_BASE + Math.floor(topScore() / APPLE_RAMP_SCORE);
+    const base = Math.max(0, Math.round(levelCfg.appleBase));
+    const byTime = base + Math.floor(Math.max(0, now - runStartAt) / (APPLE_RAMP_SEC * 1000));
+    const byScore = base + Math.floor(topScore() / APPLE_RAMP_SCORE);
     return Math.min(Math.max(byTime, byScore), levelCfg.apples);
 }
 
@@ -392,7 +403,9 @@ function makePlayer(i) {
         score: 0,
         spawnAt: -1,
         alive: true,
-        buildRequested: false
+        buildRequested: false,
+        upgradeRequested: false,
+        invUntil: 0
     };
 }
 
@@ -432,6 +445,7 @@ function reset() {
     runStartAt = -1;
     drops = [];
     corpses = [];
+    cutFx = [];
     turrets = [];
     bullets = [];
 
@@ -543,6 +557,44 @@ function pickPowerUp(p, kind, now) {
     }
 }
 
+// 撞上了怎么办：关卡允许「剪短」就从头部剪掉若干节（蛇头退回上一节），
+// 否则照旧死。剪完比最小长度还短 = 直接死 —— 「最短减到最小长度，再短就死亡」。
+// 无敌期间：撞墙不前进、撞蛇直接穿过去、敌人的子弹也打不动。
+// 剪短一次就挂一段无敌（levelCfg.invMs，默认 2 秒）—— 不然头还朝着墙就会被连着剪。
+function invincible(p, now) {
+    return !!p.invUntil && now < p.invUntil;
+}
+
+function crashPlayer(p, cut, now) {
+    if (!cut || cut <= 0) return killPlayer(p, now);
+
+    const keep = p.body.length - cut;
+    if (keep < MIN_BODY_LEN) return killPlayer(p, now);
+
+    // 被剪掉的头颈先留一份给动画：它们会往回缩进身体里
+    const goneCells = p.body.slice(0, cut);
+    const goneHp = p.hp.slice(0, cut);
+    if (!cutFx) cutFx = [];
+    cutFx.push({
+        id: ++cutFxSeq,
+        owner: p,
+        cells: goneCells,
+        hp: goneHp,
+        dir: { x: p.dir.x, y: p.dir.y },
+        at: now,
+        bodyColor: p.def.body,
+        headColor: p.def.head
+    });
+    while (cutFx.length > 6) cutFx.shift();      // 别堆太多
+
+    p.body.splice(0, cut);     // 从头部剪
+    p.hp.splice(0, cut);       // 血条跟着对齐
+    const inv = Math.max(0, Math.round(levelCfg.invMs) || 0);
+    if (inv > 0) p.invUntil = now + inv;
+    syncHud();
+    return false;
+}
+
 function step(p, now) {
     if (!p.alive) return;
 
@@ -550,9 +602,10 @@ function step(p, now) {
     // 转弯时不会出现「头已经伸到 A 格、逻辑却走到 B 格」的跳变
     const head = cell(p.body[0].x + p.dir.x, p.body[0].y + p.dir.y);
 
-    // 撞墙
+    // 撞墙：可以把蛇剪短（剪到最短就死）；无敌期间这一步不前进
     if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS) {
-        return killPlayer(p, now);
+        if (invincible(p, now)) return;
+        return crashPlayer(p, Math.round(levelCfg.cutWall) || 0, now);
     }
 
     const eatIdx = appleIndexAt(head.x, head.y);
@@ -576,15 +629,25 @@ function step(p, now) {
     const willGrow = willEat || dropKind === 'len';
 
     // 这一帧不会移动的那截尾巴不参与碰撞判定（尾巴正好让开）
+    const inv = invincible(p, now);
+    const snakeCut = Math.round(levelCfg.cutSnake) || 0;
+
     const body = willGrow ? p.body : p.body.slice(0, p.body.length - 1);
     for (let i = 0; i < body.length; i++) {
-        if (body[i].x === head.x && body[i].y === head.y) return killPlayer(p, now);
+        if (body[i].x === head.x && body[i].y === head.y) {
+            if (inv) break;                       // 无敌：从自己身上穿过去
+            return crashPlayer(p, snakeCut, now);
+        }
     }
 
     // 撞到敌人蛇、另一位玩家、或者任意炮塔
-    if (enemyAt(head.x, head.y, null)) return killPlayer(p, now);
-    if (playerAt(head.x, head.y, p)) return killPlayer(p, now);
-    if (occupiedByTurret(head.x, head.y)) return killPlayer(p, now);
+    if (enemyAt(head.x, head.y, null)) {
+        if (!inv) return crashPlayer(p, snakeCut, now);
+    } else if (playerAt(head.x, head.y, p)) {
+        if (!inv) return crashPlayer(p, snakeCut, now);
+    } else if (occupiedByTurret(head.x, head.y)) {
+        if (!inv) return killPlayer(p, now);
+    }
 
     p.body.unshift(head);
     if (willGrow) {
@@ -783,10 +846,10 @@ function bodyIndexAt(body, x, y) {
 }
 
 // 给某一节扣血。返回 true 表示这一击把整条蛇打死了
-function damageBody(body, hp, index, now) {
+function damageBody(body, hp, index, now, dmg) {
     if (index < 0 || index >= body.length) return false;
 
-    hp[index] -= 1;
+    hp[index] -= (dmg || 1);
     if (hp[index] > 0) return false;   // 只是受伤，还没断
 
     // 生命见底：连它自己带后面所有节一起拆掉。
@@ -1213,7 +1276,7 @@ function buildTurret(p) {
     p.hp.length = p.body.length;
     p.coins -= levelCfg.turretCoins;
     syncHud();
-    turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0, owner: p });
+    turrets.push({ x: spot.x, y: spot.y, cooldownUntil: 0, owner: p, upA: 0, upB: 0 });
     return true;
 }
 
@@ -1240,14 +1303,69 @@ function friendlyFireOn() {
 }
 
 // 射程内最近的目标（敌人蛇头；竞争模式还包括对方的整条身体）
+// ------------------------------ 炮塔升级 ------------------------------
+// 升级对象：离蛇头最近的那座「自己的」炮塔
+function nearestTurret(p) {
+    if (!turrets || !p || !p.body || !p.body[0]) return null;
+    const h = p.body[0];
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < turrets.length; i++) {
+        const t = turrets[i];
+        if (t.owner !== p) continue;
+        const d = Math.abs(t.x - h.x) + Math.abs(t.y - h.y);
+        if (d < bestD) {
+            bestD = d;
+            best = t;
+        }
+    }
+    return best;
+}
+
+function upgradeLevel(t, path) {
+    return Math.min(TURRET_UP_MAX, (path === 'B' ? (t.upB || 0) : (t.upA || 0)));
+}
+
+// 下一级要多少币；-1 = 已满级
+function upgradeCost(t, path) {
+    const lv = upgradeLevel(t, path);
+    return lv >= TURRET_UP_MAX ? -1 : TURRET_UP_COST[lv];
+}
+
+function canUpgrade(p, path) {
+    if (state !== 'running' || !p || !p.alive) return false;
+    const t = nearestTurret(p);
+    if (!t) return false;
+    const cost = upgradeCost(t, path);
+    return cost >= 0 && p.coins >= cost;
+}
+
+function upgradeTurret(p, path) {
+    if (!canUpgrade(p, path)) return false;
+    const t = nearestTurret(p);
+    p.coins -= upgradeCost(t, path);
+    if (path === 'B') t.upB = (t.upB || 0) + 1;
+    else t.upA = (t.upA || 0) + 1;
+    syncHud();
+    return true;
+}
+
+// B 级：速度 / 力量 / 射程
+function turretRange(t) { return TURRET_RANGE + TURRET_B_RANGE[upgradeLevel(t, 'B')]; }
+function turretDamage(t) { return TURRET_B_DMG[upgradeLevel(t, 'B')]; }
+function turretBulletSpeed(t) { return BULLET_SPEED * TURRET_B_SPEED[upgradeLevel(t, 'B')]; }
+// A 级：每秒能转多少弧度（0 = 不跟踪）
+function turretTurn(t) { return TURRET_A_TURN[upgradeLevel(t, 'A')]; }
+
 function turretTarget(t) {
     let best = null;
-    let bestD = TURRET_RANGE + 1;
+    const range = turretRange(t);
+    let bestD = range + 1;
 
     for (let i = 0; i < enemies.length; i++) {
         const h = enemies[i].body[0];
         const d = Math.hypot(h.x - t.x, h.y - t.y);
-        if (d <= TURRET_RANGE && d < bestD) {
+        if (d <= range && d < bestD) {
             bestD = d;
             best = h;
         }
@@ -1260,7 +1378,7 @@ function turretTarget(t) {
             for (let k = 0; k < q.body.length; k++) {
                 const s = q.body[k];
                 const d = Math.hypot(s.x - t.x, s.y - t.y);
-                if (d <= TURRET_RANGE && d < bestD) {
+                if (d <= range && d < bestD) {
                     bestD = d;
                     best = s;
                 }
@@ -1282,21 +1400,59 @@ function updateTurrets(now) {
         if (!target || target.d < 0.0001) continue;
 
         t.cooldownUntil = now + TURRET_COOLDOWN;
+        const sp = turretBulletSpeed(t);
         bullets.push({
             from: 'player',
             owner: t.owner,
+            dmg: turretDamage(t),
+            homing: turretTurn(t),      // > 0 = 会拐弯追人
             x: t.x + 0.5,
             y: t.y + 0.5,
-            vx: ((target.x - t.x) / target.d) * BULLET_SPEED,
-            vy: ((target.y - t.y) / target.d) * BULLET_SPEED
+            vx: ((target.x - t.x) / target.d) * sp,
+            vy: ((target.y - t.y) / target.d) * sp
         });
     }
+}
+
+// 离某点最近的敌人蛇头（跟踪子弹用）
+function nearestEnemyHead(x, y) {
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+        const h = enemies[i].body[0];
+        if (!h) continue;
+        const d = Math.hypot(h.x - x, h.y - y);
+        if (d < bestD) {
+            bestD = d;
+            best = h;
+        }
+    }
+    return best;
 }
 
 // 子弹只打敌人，不会误伤玩家
 function updateBullets(dtSec, now) {
     for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
+
+        // A 级跟踪：朝最近的敌人蛇头匀速转过去（每秒最多转 homing 弧度）
+        if (b.homing > 0) {
+            const tgt = nearestEnemyHead(b.x, b.y);
+            if (tgt) {
+                const want = Math.atan2(tgt.y - b.y, tgt.x - b.x);
+                const cur = Math.atan2(b.vy, b.vx);
+                let diff = want - cur;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                const maxTurn = b.homing * dtSec;
+                const turn = Math.max(-maxTurn, Math.min(maxTurn, diff));
+                const ang = cur + turn;
+                const sp = Math.hypot(b.vx, b.vy);
+                b.vx = Math.cos(ang) * sp;
+                b.vy = Math.sin(ang) * sp;
+            }
+        }
+
         b.x += b.vx * dtSec;
         b.y += b.vy * dtSec;
 
@@ -1321,7 +1477,7 @@ function updateBullets(dtSec, now) {
             }
             if (hitEnemy) {
                 bullets.splice(i, 1);
-                if (damageBody(hitEnemy.body, hitEnemy.hp, hitIdx, now)) killEnemy(hitEnemy, now);
+                if (damageBody(hitEnemy.body, hitEnemy.hp, hitIdx, now, b.dmg || 1)) killEnemy(hitEnemy, now);
                 continue;
             }
 
@@ -1333,18 +1489,19 @@ function updateBullets(dtSec, now) {
                     const pIdx = bodyIndexAt(q.body, cx, cy);
                     if (pIdx === -1) continue;
                     bullets.splice(i, 1);
-                    if (damageBody(q.body, q.hp, pIdx, now)) killPlayer(q, now);
+                    if (damageBody(q.body, q.hp, pIdx, now, b.dmg || 1)) killPlayer(q, now);
                     break;
                 }
             }
         } else {
-            // 敌方子弹只打玩家；打中谁就扣谁那一段的血
+            // 敌方子弹只打玩家；打中谁就扣谁那一段的血（无敌期间子弹照样被打掉，但不掉血）
             for (let k = 0; k < players.length; k++) {
                 const q = players[k];
                 if (!q.alive) continue;
                 const pIdx = bodyIndexAt(q.body, cx, cy);
                 if (pIdx === -1) continue;
                 bullets.splice(i, 1);
+                if (invincible(q, now)) break;
                 if (damageBody(q.body, q.hp, pIdx, now)) killPlayer(q, now);
                 break;
             }

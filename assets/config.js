@@ -46,6 +46,7 @@ const DROP_LIFE_MS = 12000;     // 敌人尸体掉落物的存在时间
 const SEGMENT_HP = 2;           // 每一节蛇身的生命值
 const HP_REGEN_MS = 5000;       // 每节血量随时间线性回复：5 秒回 1 点
 const DEATH_ANIM_MS = 320;      // 敌人阵亡后缩小淡出的时长
+const CUT_FX_MS = 340;          // 被剪短的头颈「缩回去」的动画时长
 const MIN_BODY_LEN = 2;         // 蛇身最短长度，砍到比这还短就直接死亡
 
 // 拓宽道具
@@ -96,6 +97,15 @@ const TURRET_MIN_LEN = 4;       // 蛇身至少这么长才能建（建完还剩
 const TURRET_MAX = 4;           // 同时存在的上限
 const TURRET_RANGE = 8;         // 射程（格）
 const TURRET_COOLDOWN = 1500;   // 开火间隔（毫秒）
+
+// 炮塔升级：A = 跟踪，B = 速度 / 力量 / 射程。升级的是「离蛇头最近的那座自己的塔」。
+// 只花币，不吃身长。等级表按 0..TURRET_UP_MAX 写，方便直接索引。
+const TURRET_UP_MAX = 3;
+const TURRET_UP_COST = [2, 4, 6];             // 升到 1 / 2 / 3 级各要多少币
+const TURRET_A_TURN = [0, 4, 7, 11];          // A 级：子弹每秒最多转多少弧度（跟踪）
+const TURRET_B_SPEED = [1, 1.4, 1.8, 2.2];    // B 级：子弹速度倍率
+const TURRET_B_DMG = [1, 2, 3, 4];            // B 级：每发多少伤害
+const TURRET_B_RANGE = [0, 3, 6, 9];          // B 级：射程加成（格）
 const BULLET_SPEED = 9;         // 子弹速度（格/秒）
 
 // 道具表：respawnMs = 被吃掉后多久重新出现
@@ -124,6 +134,7 @@ function levelDefaults() {
         stepMs: STEP_MS,      // 每走一步的间隔，越小越快
 
         // 场上刷什么
+        appleBase: APPLE_BASE, // 开局就有几个苹果（原来固定在 1），之后随时间/得分往上涨
         apples: APPLE_MAX,    // 同屏苹果上限
         enemies: true,
         enemyMax: ENEMY_MAX,  // 同时存在的敌人上限
@@ -142,7 +153,13 @@ function levelDefaults() {
         // 炮塔
         turretCost: TURRET_COST,        // 建塔消耗的身长（节）
         turretCoins: TURRET_COIN_COST,  // 建塔消耗的币
-        turretMax: TURRET_MAX
+        turretMax: TURRET_MAX,
+
+        // 撞墙 / 撞蛇：剪短多少节（从头部往尾巴方向剪，蛇头退回）。
+        // 0 = 老行为，直接死。剪到比 MIN_BODY_LEN 还短也是死。
+        cutWall: 0,
+        cutSnake: 0,
+        invMs: 2000,          // 被剪短之后无敌多久（0 = 不给无敌）
     };
 }
 
@@ -169,6 +186,12 @@ const EASE_FNS = {
 const ease = EASE_FNS[EASING] || EASE_FNS.linear;
 
 // 缓入（起步慢、越来越快），给阵亡消散用
+// 剪短动画用：一开始缩得快，最后慢慢停住
+function easeOutCubic(t) {
+    const u = Math.max(0, Math.min(1, t));
+    return 1 - Math.pow(1 - u, 3);
+}
+
 function easeInCubic(t) {
     return t * t * t;
 }
@@ -383,6 +406,8 @@ const boostLeftEl = document.getElementById('boostLeft');
 const enemyTagEl = document.getElementById('enemyTag');
 const enemyLeftEl = document.getElementById('enemyLeft');
 const buildBtnEls = [document.getElementById('buildBtn0'), document.getElementById('buildBtn1')];
+const upABtnEls = [document.getElementById('upABtn0'), document.getElementById('upABtn1')];
+const upBBtnEls = [document.getElementById('upBBtn0'), document.getElementById('upBBtn1')];
 const pauseBtnEl = document.getElementById('pauseBtn');
 const startPanelEl = document.getElementById('startPanel');
 // 版本号那行留给 index.html 去写：APP_VERSION 属于联机模块（net.js），
