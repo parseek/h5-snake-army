@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>贪吃蛇 · Canvas</title>
     <link rel="stylesheet" href="./assets/global.css">
 
@@ -417,6 +417,10 @@
 
         canvas {
             display: block;
+            /* 手机窄屏时整体等比缩下来，别横向溢出（高度交给 CSS 按比例算，
+               所以 setCanvasSize 只写 width，不写死 height） */
+            max-width: 100%;
+            touch-action: none;   /* 在棋盘上滑动＝操作，不是滚动 */
         }
 
         /* 连上之后联机面板就没了，操作全收到这条状态条上 */
@@ -506,6 +510,11 @@
             border-radius: 4px;
         }
 
+        /* .operate 自己写了 display:flex，会盖住浏览器默认的 [hidden]{display:none} */
+        .operate[hidden] {
+            display: none;
+        }
+
         .operate .btn:active {
             background-color: saddlebrown;
             color: #fff;
@@ -523,6 +532,106 @@
             line-height: 1.7;
             text-align: center;
             color: var(--ink);
+        }
+
+        /* ------------------------------ 手机 / 触摸屏 ------------------------------
+           pointer: coarse = 触摸屏；max-width 那条兜住窄窗口（比如桌面版窗口拖窄）。
+           桌面鼠标环境一条都不会命中，所以原来的样子不变。 */
+        @media (pointer: coarse), (max-width: 560px) {
+            body {
+                padding: 8px 8px calc(14px + env(safe-area-inset-bottom));
+                align-items: flex-start;
+                overscroll-behavior-y: contain;   /* 别玩着玩着下拉刷新 */
+            }
+
+            .game {
+                gap: 8px;
+                width: 100%;
+            }
+
+            .hud {
+                gap: 10px;
+                font-size: 13px;
+            }
+
+            /* 操作区按拇指来放大：方向键 66px，整行的功能键 48px 高 */
+            .pads {
+                display: flex;
+                gap: 10px;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .operate {
+                width: 210px;
+                gap: 6px;
+            }
+
+            .operate .btn {
+                width: 66px;
+                height: 66px;
+                font-size: 20px;
+                border-radius: 10px;
+                touch-action: manipulation;   /* 去掉双击缩放那 ~300ms 的等待 */
+            }
+
+            .operate .btn.flex {
+                height: 48px;
+                font-size: 14px;
+            }
+
+            /* 开局后把长篇帮助收起来，让「棋盘 + 操作区」塞得进一屏 */
+            body.playing .desc {
+                display: none;
+            }
+
+            .desc {
+                max-width: none;
+                font-size: 13px;
+                text-align: left;
+            }
+
+            /* 输入框字号小于 16px，iOS 一聚焦就会把整个页面放大 */
+            .start .netIce,
+            .start textarea {
+                font-size: 16px;
+            }
+
+            .start {
+                padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
+            }
+
+            .startBtn {
+                width: 200px;
+                padding: 12px 0;
+            }
+
+            .startBtn.small {
+                width: auto;
+                padding: 8px 14px;
+            }
+        }
+
+        /* 横屏手机：屏幕高度才是瓶颈，棋盘按高度收一收，按键也收小一点 */
+        @media (pointer: coarse) and (orientation: landscape) {
+            canvas {
+                max-width: min(100%, 58vh);
+            }
+
+            .operate {
+                width: 168px;
+            }
+
+            .operate .btn {
+                width: 52px;
+                height: 52px;
+                font-size: 17px;
+            }
+
+            .operate .btn.flex {
+                height: 40px;
+                font-size: 13px;
+            }
         }
     </style>
 </head>
@@ -675,14 +784,23 @@
             <button class="miniBtn danger" id="netBarLeave">退出连接</button>
         </div>
 
-        <div class="operate">
-            <div class="btn flex" data-dir="up">上</div>
-            <div class="btn" data-dir="left">左</div>
-            <div class="btn" data-dir="down">下</div>
-            <div class="btn" data-dir="right">右</div>
-            <div class="btn build flex" id="buildBtn0">P1 建塔 · 身长 −2</div>
-            <div class="btn build flex" id="buildBtn1">P2 建塔 · 身长 −2</div>
-            <div class="btn pause flex" id="pauseBtn">暂停</div>
+        <div class="pads">
+            <div class="operate">
+                <div class="btn flex" data-dir="up">上</div>
+                <div class="btn" data-dir="left">左</div>
+                <div class="btn" data-dir="down">下</div>
+                <div class="btn" data-dir="right">右</div>
+                <div class="btn build flex" id="buildBtn0">P1 建塔 · 身长 −2</div>
+                <div class="btn pause flex" id="pauseBtn">暂停</div>
+            </div>
+            <!-- P2 的方向键：只在「本地双人」时出现；手机上两人各按各的 -->
+            <div class="operate" id="pad2" hidden>
+                <div class="btn flex" data-dir2="up">上</div>
+                <div class="btn" data-dir2="left">左</div>
+                <div class="btn" data-dir2="down">下</div>
+                <div class="btn" data-dir2="right">右</div>
+                <div class="btn build flex" id="buildBtn1">P2 建塔 · 身长 −2</div>
+            </div>
         </div>
 
         <p class="desc">

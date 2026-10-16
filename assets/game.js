@@ -271,6 +271,12 @@ function reset() {
 }
 
 // 选模式开局：1 = 单人（15 宽场地），2 = 本地双人（宽度翻倍）
+// 手机上开局后要把长篇帮助收起来（CSS 里靠 body.playing 判断），
+// 客机不会走 start()，所以 netApplySnapshot 也要调它一次
+function syncPlayingClass() {
+    document.body.classList.toggle('playing', state !== 'menu');
+}
+
 function start(m, tm, arena) {
     if (MODES[m]) mode = m;
     if (TEAM_MODES[tm]) teamMode = tm;
@@ -285,6 +291,7 @@ function start(m, tm, arena) {
     hideStartUi();
     reset();
     state = 'running';
+    syncPlayingClass();
     last = performance.now();
     netAsk = null;
     syncNetBar();
@@ -304,6 +311,7 @@ function showMenu() {
     netLeave();
     reset();               // 用当前模式的场地当背景
     state = 'menu';
+    syncPlayingClass();
     startPanelEl.hidden = false;
     netPanelEl.hidden = true;
     syncPauseBtn();

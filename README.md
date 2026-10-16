@@ -32,7 +32,22 @@
 | 联机对战 | WebRTC 直连，最多 **6 人**同局 + 观战席；一条连接一个座位，程序版本不一致会直接拒绝连接 |
 
 键位：P1 方向键 + `/` 建塔，P2 WASD + `Q` 建塔，
-`P` 暂停，`Esc` 回模式选择。屏幕上也有方向键和建塔按钮（只控 P1）。
+`P` 暂停，`Esc` 回模式选择。屏幕上也有方向键和建塔按钮。
+
+## 手机
+
+手机上直接用屏幕上的方向键操作（触摸设备下会放大到 66px，整行功能键 48px）：
+
+- **棋盘自适应**：窄屏时画布等比缩到屏宽（`max-width` + 高度 `auto`），30×15 的场地也不会横向溢出；
+  在棋盘上滑动不会被当成滚动，双击也不会缩放页面（`touch-action`）。
+- **本地双人**：底部会多出**第二套方向键**（只有本地双人才出现），两个人各按各的；
+  联机客机只有自己那一个。
+- **一屏放得下**：开局后长篇帮助会自动收起（`body.playing`），打完回菜单再出现；
+  刘海屏用了 `env(safe-area-inset-bottom)`。
+- 输入框在手机上字号 ≥16px —— 否则 iOS 一聚焦就把整页放大。
+
+手机上最快的试法：浏览器打开 <https://renjisnake.netlify.app/>（单人 / 本地双人 / 连接码联机都能玩）。
+要跟电脑上的 Tauri 房主联机，见下面「手机连电脑一直打洞超时？」那一节。
 
 ## 怎么跑
 
@@ -231,6 +246,11 @@ npm run serve      # 只想自己打开看时：静态服务（默认 9211，可
   —— 拆文件最容易犯的错就是「函数搬过去了但没人定义」或「忘了加 `<script src>`」
 * 真的开局跑几百帧：走位、建塔、拓宽、敌人推进、快照往返、暂停、双人、重开
 
+> 这台机器上 `--dump-dom` / `--screenshot` 会**静默返回空**（Edge 155 起这两个一次性开关
+> 就不出声了，任何页面、任何 headless 模式都一样）。要截图/量尺寸请用 `scripts/shot.mjs`
+> —— 它走 CDP，一个进程，还能 `--mobile --size 390,844` 模拟手机（连 `(pointer: coarse)`
+> 一起模拟）。
+
 `scripts/smoke.mjs` 还可以单独用来截界面：`--size 1638,1031` 指定窗口尺寸、
 `--shot out.png` 出图 —— 改 CSS 时很值得先在**和用户一样的窗口尺寸**下看一遍
 （曾经就是因为只在 900px 宽底下看过，联机面板的输入框在宽窗口里横着铺满整个屏幕
@@ -271,6 +291,7 @@ src-tauri/binaries/         EasyTier 二进制（不入库，npm run fetch:easyt
 scripts/sync-web.mjs        把前端拷进 dist/
 scripts/serve-dist.mjs      验证用静态服务（带 /__probe 回传口）
 scripts/smoke.mjs           安全地起一个隔离的无头浏览器
+scripts/shot.mjs            用 CDP 量尺寸 / 跑一段 JS / 截图（--size、--mobile 手机模拟）
 scripts/probe-web.mjs       端到端探针（npm run probe）
 scripts/pack-netlify.mjs    打线上发布包 release/netlify/（npm run pack:netlify）
 scripts/pack-exe.mjs        把 exe 拷到 src-tauri/target/release/

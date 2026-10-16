@@ -670,6 +670,10 @@ function syncPauseBtn() {
 // 身长不够 / 到上限时按钮变灰
 let buildBtnLabels = ['', ''];
 function syncBuildBtn() {
+    // 本地双人才摆出第二个方向键盘（手机上一只手按一个；联机时只有自己那一个）
+    const pad2 = document.getElementById('pad2');
+    if (pad2) pad2.hidden = !dualLocal();
+
     for (let i = 0; i < buildBtnEls.length; i++) {
         // 单人模式下把 P2 那个按钮收起来
         if (i >= players.length) {

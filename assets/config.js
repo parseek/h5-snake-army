@@ -202,7 +202,8 @@ function setCanvasSize(w, h) {
     canvas.width = W * dpr;
     canvas.height = H * dpr;
     canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
+    // 高度交给 CSS（auto）：窄屏上 max-width:100% 才能等比缩，不会拉变形
+    canvas.style.height = 'auto';
 }
 
 // 直接落到最终尺寸（开局 / 重开时用）

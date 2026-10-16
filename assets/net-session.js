@@ -618,6 +618,7 @@ function netApplySnapshot(m) {
         };
     });
 
+    syncPlayingClass();
     syncHud();
     syncNetBar();     // 客机的状态条要跟着主机的状态走
     if (!netPanelEl.hidden || !startPanelEl.hidden) hideStartUi();

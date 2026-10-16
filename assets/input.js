@@ -131,6 +131,18 @@ Array.prototype.forEach.call(
     }
 );
 
+// 本地双人的第二个方向键盘（手机上两人各按各的）。
+// 联机客机不走这里 —— 那边由 localTurn 把操作发给主机。
+Array.prototype.forEach.call(
+    document.querySelectorAll('.operate .btn[data-dir2]'),
+    function (btn) {
+        btn.addEventListener('click', function () {
+            if (!dualLocal() || !players || !players[1]) return;
+            turn(players[1], btn.getAttribute('data-dir2'));
+        });
+    }
+);
+
 for (let i = 0; i < buildBtnEls.length; i++) {
     (function (idx) {
         buildBtnEls[idx].addEventListener('click', function () {
