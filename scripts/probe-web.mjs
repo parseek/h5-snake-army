@@ -332,6 +332,11 @@ function phase4(w) {
         ].join('\\n'));
     });
 
+    // 手机连电脑打洞超时那件事的三条修复
+    step('ip-of-url', function () { return ev(w, 'ipOfUrl("http://192.168.1.23:47812") + "|" + ipOfUrl("https://x:1") + "|" + ipOfUrl("垃圾") + "|" + ipOfUrl("http://127.0.0.1:9")'); });
+    step('code-carries-ip', function () { return ev(w, 'var c1 = netEncode("v=0 x", "offer", "192.168.1.23"); var c2 = netEncode("v=0 x", "offer"); netDecode(c1, "offer").ip + "/" + netDecode(c2, "offer").ip + " 段数 " + c1.split("#").length + "/" + c2.split("#").length'); });
+    step('patch-unmasks-mdns', function () { return ev(w, 'window.__added = []; var fake = { remoteDescription: { sdp: "a=candidate:1 1 udp 2113 abc.local 50000 typ host" + String.fromCharCode(13,10) + "a=candidate:2 1 udp 2113 10.0.0.9 50001 typ host" }, addIceCandidate: function (c) { window.__added.push(c.candidate); return Promise.resolve(); } }; netPatchIp(fake, "192.168.1.23") + " 条 => " + window.__added.join(" ; ")'); });
+
     report.phases.seats = {
         maxPlayers: ev(w, 'MAX_PLAYERS'),
         wanted: ev(w, 'netWantedPlayers()'),

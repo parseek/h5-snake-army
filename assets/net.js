@@ -35,10 +35,24 @@ const NET_ICE_DEFAULT = [
     ] }
 ];
 
-// 连接码 = SNK#程序版本#角色#base64(SDP)。用 # 分隔是因为版本号里本来就有点。
-// 前缀让「粘错码 / 版本不对」在本地就能认出来，不用等 WebRTC 抛一堆英文。
-function netEncode(sdp, role) {
-    return NET_TAG + '#' + APP_VERSION + '#' + (role === 'offer' ? 'O' : 'A') + '#' + btoa(sdp);
+// 连接码 = SNK#程序版本#角色#base64(SDP)[#主机的局域网IP]。
+// 用 # 分隔是因为版本号里本来就有点；前缀让「粘错码 / 版本不对」在本地就能认出来。
+//
+// 末尾那个 IP 是可选的：主机在局域网里出码时带上它，对方（尤其是手机）就能自动
+// 把 mDNS 候选补成真地址 —— 浏览器把本地候选写成 xxxx.local，手机上经常解析不了。
+function netEncode(sdp, role, ip) {
+    const tail = (ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) ? '#' + ip : '';
+    return NET_TAG + '#' + APP_VERSION + '#' + (role === 'offer' ? 'O' : 'A') + '#' + btoa(sdp) + tail;
+}
+
+// 'http://192.168.1.23:47812' -> '192.168.1.23'（拿不到就返回空串）
+function ipOfUrl(u) {
+    try {
+        const h = new URL(String(u)).hostname;
+        return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) ? h : '';
+    } catch (e) {
+        return '';
+    }
 }
 
 function netDecode(code, wantRole) {
@@ -46,7 +60,7 @@ function netDecode(code, wantRole) {
     if (!s) throw new Error('EMPTY');
 
     const parts = s.split('#');
-    if (parts.length !== 4 || parts[0] !== NET_TAG) throw new Error('FORMAT');
+    if (parts.length < 4 || parts[0] !== NET_TAG) throw new Error('FORMAT');
 
     const role = (parts[2] === 'O') ? 'offer' : 'answer';
     if (wantRole && role !== wantRole) throw new Error('ROLE:' + role);
@@ -58,7 +72,8 @@ function netDecode(code, wantRole) {
     try { sdp = atob(parts[3]); } catch (e) { throw new Error('BASE64'); }
     if (sdp.indexOf('v=0') !== 0) throw new Error('SDP');
 
-    return { role: role, sdp: sdp, version: parts[1] };
+    const ip = (parts[4] && /^\d{1,3}(\.\d{1,3}){3}$/.test(parts[4])) ? parts[4] : '';
+    return { role: role, sdp: sdp, version: parts[1], ip: ip };
 }
 
 // 把上面那些错误码翻译成能看懂的话
@@ -109,13 +124,17 @@ function netPatchIp(pc, ip) {
     const sdp = (pc.remoteDescription && pc.remoteDescription.sdp) || '';
     const re = /a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ host[^\r\n]*/g;
 
+    const isIp = /^\d{1,3}(\.\d{1,3}){3}$/;
     let m = null;
     let n = 0;
     while ((m = re.exec(sdp)) !== null) {
+        // 本来就已经是真地址的（没被 mDNS 混淆）不用补，省得塞一堆重复候选
+        if (isIp.test(m[5])) continue;
         const cand = 'candidate:' + m[1] + ' ' + m[2] + ' ' + m[3] + ' ' + m[4] + ' ' +
             ip + ' ' + m[6] + ' typ host';
         try {
-            pc.addIceCandidate({ candidate: cand, sdpMid: '0', sdpMLineIndex: 0 });
+            const p = pc.addIceCandidate({ candidate: cand, sdpMid: '0', sdpMLineIndex: 0 });
+            if (p && p.catch) p.catch(function () { });   // 被拒也别冒成未捕获错误
             n++;
         } catch (e) { /* 加不进去就算了，原来的候选还在 */ }
     }

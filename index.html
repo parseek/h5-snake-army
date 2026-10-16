@@ -616,6 +616,10 @@
                         <button class="startBtn small" id="directSearchBtn">搜索这个地址</button>
                     </div>
                     <div class="tip" id="directMsg">房主开好房间后会把地址显示出来，粘到这里就能搜到他的房间</div>
+                    <div class="tip">手机连电脑连不上？① 手机和电脑得在<b>同一个 Wi-Fi</b>（别用流量）；
+                        ② 电脑的<b>防火墙要放行</b> snake-army.exe <b>和 msedgewebview2.exe</b>（专用 + 公用都勾上）——
+                            桌面版真正收发 UDP 的是 WebView2 那个进程。
+                        进入后状态栏会写有没有自动补上电脑的局域网地址 —— 补上了还超时，多半就是防火墙。</div>
                     <div class="lanList" id="directList"></div>
                 </div>
                 <div class="lanBox" id="wanBox" hidden>

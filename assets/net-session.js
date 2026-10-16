@@ -385,7 +385,14 @@ async function netHostCreate() {
     await peer.pc.setLocalDescription(await peer.pc.createOffer());
     const gatherOk = await netWaitIce(peer.pc);
 
-    netCodeEl.value = netEncode(peer.pc.localDescription.sdp, 'offer');
+    // 出码时顺带把自己的局域网地址带上（桌面版）：手机解析不了 mDNS 名字时，
+    // 对方能直接拿这个地址补候选，不用手输 IP。
+    // lanOwnBase 会把内嵌信令服务起起来，同时把 ip:port 报回来。
+    let myIp = '';
+    if (NATIVE) {
+        try { await lanOwnBase(null); myIp = lanShareIp(); } catch (e) { myIp = ''; }
+    }
+    netCodeEl.value = netEncode(peer.pc.localDescription.sdp, 'offer', myIp);
     netHostStage = 'offer';
     netSetStatus(peer.seat < 0 ? '① 这是一张观战码（玩家席已经满了）'
         : '① 这是座位 ' + peer.seat + ' 的连接码',
@@ -428,14 +435,17 @@ async function netGuestAcceptOffer() {
     });
 
     await peer.pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
-    const patched = netPatchIp(peer.pc, netPeerIpEl.value.trim());
+    // 优先用主机写在码里的局域网地址；没有就看手填的那个框
+    const useIp = d.ip || netPeerIpEl.value.trim();
+    const patched = netPatchIp(peer.pc, useIp);
     await peer.pc.setLocalDescription(await peer.pc.createAnswer());
     const gatherOk = await netWaitIce(peer.pc);
 
     netCodeEl.value = netEncode(peer.pc.localDescription.sdp, 'answer');
     netSetStatus('② 把下面的应答码发回给主机',
         netDiag(peer.pc) + netIceWarn(peer.pc, gatherOk) +
-        (patched ? '　已按你填的 IP 补了 ' + patched + ' 条候选' : '') +
+        (patched ? '　已按 ' + useIp + ' 补了 ' + patched +
+            ' 条候选（' + (d.ip ? '来自主机码' : '你填的 IP') + '）' : '') +
         '　v' + APP_VERSION + '，对方 v' + d.version + ' ✓');
     netUseBtnEl.disabled = true;
     netStartConnectTimer(peer.pc);
@@ -459,7 +469,13 @@ function netStartConnectTimer(pc) {
         } else {
             why = '已经有中继候选还是不通，检查 TURN 的地址和账号密码';
         }
-        netSetStatus('打洞超时了', why + '　（' + netDiag(pc) + '）');
+        netSetStatus('打洞超时了',
+            why + '　（' + netDiag(pc) + '）' +
+            '　同一局域网里（手机连电脑）最常见的是电脑防火墙拦了 UDP：' +
+            'Windows 安全中心 → 防火墙和网络保护 → 允许应用通过防火墙，' +
+            '把 snake-army.exe 和 msedgewebview2.exe（桌面版真正收发 UDP 的是 WebView2 ' +
+            '那个进程，不是主程序）都勾上「专用」和「公用」；浏览器版则是浏览器自己。' +
+            '再确认手机连的是同一个 Wi-Fi，走的不是流量。');
     }, NET_CONNECT_MS);
 }
 
@@ -629,6 +645,13 @@ function lanApi(base, path, body) {
             return j;
         });
     });
+}
+
+// 我自己在局域网里的地址：房主开房时 Rust/Python 侧会把 ip:port 报回来，
+// 取其中的 ip。出连接码、造 offer 时带上它，对方（尤其手机）就能自动补候选。
+function lanShareIp() {
+    const h = String(lanShare || '').split(':')[0];
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) ? h : '';
 }
 
 async function lanOwnBase(port) {
@@ -975,7 +998,7 @@ async function lanMakeSeat(base, id, seat) {
     // 同一个局域网用不着公网候选，等 2.5 秒就够，别让人干等
     await netWaitIce(peer.pc, 2500);
     await lanApi(base, '/api/offer', {
-        id: id, seat: seat, offer: netEncode(peer.pc.localDescription.sdp, 'offer')
+        id: id, seat: seat, offer: netEncode(peer.pc.localDescription.sdp, 'offer', lanShareIp())
     });
     return peer;
 }
@@ -1020,15 +1043,28 @@ async function lanJoin(base, id) {
             netBindChannel(ev.channel, peer);
         });
         await peer.pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+
+        // 同一局域网最容易踩的坑：浏览器把本地候选写成 xxxx.local（mDNS），手机端经常
+        // 解析不了；公网候选又得靠路由器的 NAT 回环（hairpin），家用路由器多半不支持 ——
+        // 于是 ICE 没有任何能用的候选对，只能干等到超时。
+        // 而我们本来就知道主机的局域网地址：offer 就是从 http://<主机IP>:<端口> 取的，
+        // 连接码里也可能带着（d.ip）。直接拿它把 mDNS 候选补成真地址。
+        const hostIp = d.ip || ipOfUrl(base);
+        const patched = netPatchIp(peer.pc, hostIp);
+
         await peer.pc.setLocalDescription(await peer.pc.createAnswer());
         await netWaitIce(peer.pc, 2500);
         await lanApi(base, '/api/answer', {
             id: id, seat: info.seat, answer: netEncode(peer.pc.localDescription.sdp, 'answer')
         });
 
-        netSetStatus('已把应答递回主机',
-            info.seat < 0 ? '观战席：通道一开就能看' : '通道一开就自动开局');
-        lanMsgEl.textContent = info.seat < 0 ? '已加入（观战），等待连接…' : '已加入，等待连接…';
+        const seatNote = info.seat < 0 ? '观战席：通道一开就能看' : '通道一开就自动开局';
+        const ipNote = patched ? '　已按主机的局域网地址 ' + hostIp + ' 补了 ' + patched + ' 条候选'
+            : hostIp ? '　主机地址 ' + hostIp + '（候选里没有需要补的 mDNS 名）'
+                : '　没拿到主机的局域网地址，必要时在下面手填一个 IP';
+        netSetStatus('已把应答递回主机', seatNote + ipNote);
+        lanMsgEl.textContent = (info.seat < 0 ? '已加入（观战）' : '已加入') +
+            (patched ? '，已补主机地址 ' + hostIp : '') + '，等待连接…';
         netStartConnectTimer(peer.pc);
     } catch (e) {
         lanMsgEl.textContent = '加入失败：' + e.message;
