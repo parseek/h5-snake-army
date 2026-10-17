@@ -40,7 +40,10 @@ const SPEED_MS = 30000;         // 加速持续时间（毫秒）
 
 // 出生缩放动画 / 尸体掉落
 const SPAWN_ANIM_MS = 260;      // 蛇出现时的缩放动画时长
-const DROP_LIFE_MS = 12000;     // 敌人尸体掉落物的存在时间
+const DROP_LIFE_MS = 12000;     // 敌人尸体掉落物的存在时间（实际会在这个值上下浮动）
+const DROP_CELL_CHANCE = 0.6;   // 尸体每一节掉东西的概率（以前是每节必掉、按奇偶交替）
+const DROP_LEN_CHANCE = 0.45;   // 掉出来的东西里「加身长」的比例，其余是金币
+const DROP_LIFE_JITTER = 0.4;   // 存在时间的浮动幅度（±40%）
 
 // 蛇身生命：子弹打中的是「哪一节」，不再是整条秒杀
 const SEGMENT_HP = 2;           // 每一节蛇身的生命值
@@ -48,6 +51,8 @@ const HP_REGEN_MS = 5000;       // 每节血量随时间线性回复：5 秒回 
 const DEATH_ANIM_MS = 320;      // 敌人阵亡后缩小淡出的时长
 const CUT_FX_MS = 340;          // 被剪短的头颈「缩回去」的动画时长
 const CORPSE_EASE_MS = 150;     // 尸体从「死前画到的位置」缓出到撞进去那一格的时长
+const POP_MS = 240;             // 物品出生：缓入放大 -> 回收一点 的总时长
+const POP_PEAK = 1.18;          // 放到最大是原尺寸的多少倍
 const MIN_BODY_LEN = 2;         // 蛇身最短长度，砍到比这还短就直接死亡
 
 // 拓宽道具

@@ -91,13 +91,18 @@ function willEatApple(x, y) {
     return appleIndexAt(x, y) !== -1;
 }
 
-// 下一步走过去会不会变长：苹果或「加身长」掉落物都算
-function willGrowNext(p) {
-    const nx = p.body[0].x + p.dir.x;
-    const ny = p.body[0].y + p.dir.y;
-    if (willEatApple(nx, ny)) return true;
-    const d = dropIndexAt(nx, ny);
+// 这一格上有「会让蛇变长」的东西吗：苹果，或者加身长的掉落物。
+// 逻辑和渲染必须共用这一个判断，否则会出现「身体变长了、尾巴动画却在缩」的怪样子。
+function willGrowAt(x, y) {
+    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
+    if (willEatApple(x, y)) return true;
+    const d = dropIndexAt(x, y);
     return d !== -1 && drops[d].kind === 'len';
+}
+
+// 下一步走过去会不会变长
+function willGrowNext(p) {
+    return willGrowAt(p.body[0].x + p.dir.x, p.body[0].y + p.dir.y);
 }
 
 // ------------------------------ 玩法 ------------------------------
@@ -155,6 +160,7 @@ function spawnApple() {
     // 先收集所有空格再随机取一个：场地被填满时也不会像递归那样死循环
     const spot = pickCell(freeCells());
     if (!spot) return false;
+    spot.at = gameNow;          // 出生时刻：渲染时做「放大回弹」动画
     apples.push(spot);
     return true;
 }
@@ -210,7 +216,10 @@ function spawnPowerUp(kind) {
     if (powerList(kind).length >= powerMax(kind)) return;     // 已经到同屏上限
     if (kind === 'widen' && !canWiden()) return;             // 场地到上限就不再出现
     const spot = pickCell(freeCells());
-    if (spot) powerList(kind).push(spot);
+    if (spot) {
+        spot.at = gameNow;      // 同上
+        powerList(kind).push(spot);
+    }
 }
 
 // 把场上所有坐标平移 (dx, dy) 格。
@@ -775,6 +784,7 @@ function spawnReviveItem() {
         if (ok) spot = { x: x, y: y };
     }
     reviveItem = spot || { x: free[0] % COLS, y: Math.floor(free[0] / COLS) };
+    reviveItem.at = gameNow;
 }
 
 // 找一段连着的空格，让复活的玩家落脚（头 + 身后 len-1 节）
@@ -960,6 +970,24 @@ function enemyBulletRisk(x, y) {
     return risk;
 }
 
+// 附近的战利品：加身长的值得专程去（自己变长），金币的只顺手（主要是抢玩家的）
+function nearestDropTarget(from) {
+    let best = null;
+    let bestScore = Infinity;
+    for (let i = 0; i < drops.length; i++) {
+        const d = drops[i];
+        const dist = Math.abs(d.x - from.x) + Math.abs(d.y - from.y);
+        if (dist > 5) continue;                       // 太远不专程跑
+        // 加身长的等价于近 1.5 格：同样距离时先拿能让自己变长的
+        const score = dist - (d.kind === 'len' ? 1.5 : 0);
+        if (score < bestScore) {
+            bestScore = score;
+            best = { x: d.x, y: d.y, d: dist, kind: d.kind };
+        }
+    }
+    return best;
+}
+
 // 最近的加速道具：敌人会主动去吃（已经加速中就不值得绕路，先去抢苹果）
 function nearestSpeedItem(from) {
     if (levelCfg.powerups === false || levelCfg.i_speed_on === false) return null;
@@ -1044,6 +1072,12 @@ function enemyChooseDir(self) {
     const item = nearestSpeedItem(head);
     if (item && !boosted(self) && (item.d <= 6 || !target)) {
         target = { x: item.x, y: item.y };
+    }
+
+    // 脚边的战利品：优先于苹果（加身长的能让自己更长，金币的能少给玩家一颗）
+    const loot = nearestDropTarget(head);
+    if (loot && (!target || loot.d <= 5)) {
+        target = { x: loot.x, y: loot.y };
     }
 
     if (target) {
@@ -1276,8 +1310,11 @@ function dropIndexAt(x, y) {
     return -1;
 }
 
-// 尸体各部分化作战利品：一半加身长，一半加货币
+// 尸体化作战利品：不是每节都掉，掉什么、放多久也都是随机的。
+// （以前是「每节必掉 + 奇偶交替」，看起来像一条规整的斑马线，一眼就知道下一步掉什么。）
 function dropLoot(body, now) {
+    let dropped = 0;
+
     for (let i = 0; i < body.length; i++) {
         const c = body[i];
         if (c.x < 0 || c.y < 0 || c.x >= COLS || c.y >= ROWS) continue;
@@ -1285,12 +1322,18 @@ function dropLoot(body, now) {
         if (occupiedByPlayer(c.x, c.y) || occupiedByTurret(c.x, c.y)) continue;
         if (enemyAt(c.x, c.y, null)) continue;
 
+        // 每一节按概率掉（第一节必掉，保证短蛇也有收获）
+        if (i > 0 && dropped > 0 && Math.random() > DROP_CELL_CHANCE) continue;
+
+        const life = DROP_LIFE_MS * (1 - DROP_LIFE_JITTER / 2 + Math.random() * DROP_LIFE_JITTER);
         drops.push({
             x: c.x,
             y: c.y,
-            kind: (i % 2 === 0) ? 'len' : 'coin',
-            expireAt: now + DROP_LIFE_MS
+            kind: (Math.random() < DROP_LEN_CHANCE) ? 'len' : 'coin',
+            expireAt: now + Math.round(life),
+            at: now
         });
+        dropped++;
     }
 }
 
@@ -1333,6 +1376,11 @@ function stepEnemy(self, now) {
 
     const eatIdx = appleIndexAt(head.x, head.y);
     const willEat = eatIdx !== -1;
+
+    // 掉在地上的战利品：加身长的它自己吃掉（变长），金币的踩掉（省得玩家捡）
+    const dropIdx = dropIndexAt(head.x, head.y);
+    const dropKind = (dropIdx === -1) ? null : drops[dropIdx].kind;
+
     const spList = powerList('speed');
     let sp = null;
     for (let i = 0; i < spList.length; i++) {
@@ -1343,13 +1391,16 @@ function stepEnemy(self, now) {
     }
 
     self.body.unshift(head);
-    if (willEat) {
+    if (willEat || dropKind === 'len') {
         self.hp.push(levelCfg.hp0);   // 变长时尾巴补一格血
-        apples.splice(eatIdx, 1);
-        spawnApple();               // 苹果被它抢走了，补一个新的
+        if (willEat) {
+            apples.splice(eatIdx, 1);
+            spawnApple();               // 苹果被它抢走了，补一个新的
+        }
     } else {
         self.body.pop();
     }
+    if (dropIdx !== -1) drops.splice(dropIdx, 1);   // 两种掉落物都收走
 
     // 敌人也会抢加速道具
     if (sp) {

@@ -174,18 +174,21 @@ function drawApple() {
     const r = CELL * 0.32;
 
     for (let i = 0; i < apples.length; i++) {
-        const cx = cxOf(apples[i]);
-        const cy = cyOf(apples[i]);
+        const a = apples[i];
+        const cx = cxOf(a);
+        const cy = cyOf(a);
 
-        ctx.fillStyle = COLOR.apple;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
+        withSpawnScale(cx, cy, popScale(a.at, nowRef), function () {
+            ctx.fillStyle = COLOR.apple;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-        ctx.beginPath();
-        ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.28, 0, Math.PI * 2);
-        ctx.fill();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.beginPath();
+            ctx.arc(cx - r * 0.3, cy - r * 0.35, r * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+        });
     }
 }
 
@@ -200,7 +203,10 @@ function drawSpeedAt(p) {
     const cx = cxOf(p);
     const cy = cyOf(p);
     const r = CELL * 0.34;
+    withSpawnScale(cx, cy, popScale(p.at, nowRef), function () { drawSpeedBody(cx, cy, r); });
+}
 
+function drawSpeedBody(cx, cy, r) {
     ctx.fillStyle = COLOR.speed;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -240,7 +246,10 @@ function drawWidenAt(p) {
     const cx = cxOf(p);
     const cy = cyOf(p);
     const r = CELL * 0.34;
+    withSpawnScale(cx, cy, popScale(p.at, nowRef), function () { drawWidenBody(cx, cy, r); });
+}
 
+function drawWidenBody(cx, cy, r) {
     ctx.fillStyle = COLOR.widen;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -393,6 +402,17 @@ function strokeSnake(pts, body, hp, bodyColor, headColor, dir, segScale) {
 }
 
 // 以某个点为轴做缩放，用来做出生动画
+// 物品出生：0 -> POP_PEAK（缓入放大）-> 1（回收一点）。
+// 前 55% 放大、后 45% 收回，所以看起来是「弹出来再定住」。
+function popScale(at, now) {
+    if (at === undefined || at === null) return 1;
+    const t = (now - at) / POP_MS;
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    if (t < 0.55) return POP_PEAK * easeInCubic(t / 0.55);
+    return 1 + (POP_PEAK - 1) * (1 - easeOutCubic((t - 0.55) / 0.45));
+}
+
 function withSpawnScale(px, py, s, draw) {
     if (s >= 0.999) {
         draw();
@@ -463,7 +483,10 @@ function drawReviveItem() {
     const cx = cxOf(reviveItem);
     const cy = cyOf(reviveItem);
     const r = CELL * 0.36;
+    withSpawnScale(cx, cy, popScale(reviveItem.at, nowRef), function () { drawReviveBody(cx, cy, r); });
+}
 
+function drawReviveBody(cx, cy, r) {
     ctx.fillStyle = COLOR.revive;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -542,7 +565,8 @@ function drawEnemy() {
         const head = en.body[0];
 
         // 下一步会变长（抢到苹果）的话，这一步尾巴不缩
-        const retract = !willEatApple(head.x + en.dir.x, head.y + en.dir.y);
+        // 和玩家那条蛇用同一个判断（苹果 / 加身长的掉落都算变长）
+        const retract = !willGrowAt(head.x + en.dir.x, head.y + en.dir.y);
 
         const def = enemyDef(en);
         const pts = buildPath(en.body, en.dir, e, retract);
@@ -590,6 +614,7 @@ function drawDrops() {
             ctx.globalAlpha = 0.3 + 0.7 * Math.abs(Math.sin(left / 120));
         }
 
+        withSpawnScale(cx, cy, popScale(d.at, nowRef), function () {
         ctx.fillStyle = (d.kind === 'len') ? COLOR.dropLen : COLOR.dropCoin;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -610,6 +635,7 @@ function drawDrops() {
             ctx.arc(cx, cy, r * 0.2, 0, Math.PI * 2);
             ctx.fill();
         }
+        });
 
         ctx.globalAlpha = 1;
     }

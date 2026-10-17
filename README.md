@@ -19,17 +19,17 @@
 
 1. **推 GitHub**（推荐）：Netlify 连着 GitHub 仓库，push 上去它自己重建 —— 什么都不用做。
 2. **手动拖**：`npm run pack:netlify` 会生成 `release/netlify/`（目录）和
-   `release/netlify-0.2.0.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
+   `release/netlify-0.2.1.zip`，把其中任意一个拖到 Netlify 的 Deploys 页面即可，
    不用碰 GitHub。包里只有 `index.html` + `assets/`。
 
 ## 下载桌面版
 
 | 平台 | 发行版地址 |
 |---|---|
-| Gitee | <https://gitee.com/nxbznine_bilibili/h5-snake-army/releases/tag/v0.2.0> |
-| GitHub | <https://github.com/parseek/h5-snake-army/releases/tag/v0.2.0> |
+| Gitee | <https://gitee.com/nxbznine_bilibili/h5-snake-army/releases/tag/v0.2.1> |
+| GitHub | <https://github.com/parseek/h5-snake-army/releases/tag/v0.2.1> |
 
-下载 `snake-army-0.2.0-win-x64.zip`（约 14.5 MB），解压后双击 `snake-army.exe` 就能玩，不用安装。
+下载 `snake-army-0.2.1-win-x64.zip`（约 14.5 MB），解压后双击 `snake-army.exe` 就能玩，不用安装。
 包里已经带齐跨网要用的 EasyTier 二进制（见下面「跨网」一节）；只想玩玩在线版也行，不用下载。
 
 ## 玩法
@@ -421,7 +421,7 @@ npm run build
 依次做三件事：下载 EasyTier（还没有的话）→ 编译并打包 exe → 组装便携包。产物：
 
 ```
-release/snake-army-0.2.0-win-x64.zip      14.5 MB
+release/snake-army-0.2.1-win-x64.zip      14.5 MB
   snake-army.exe                           3.11 MB   主程序（前端已经嵌进去了）
   binaries/easytier-core.exe              23.27 MB   跨网用
   binaries/easytier-cli.exe                9.51 MB   排查用
@@ -457,14 +457,14 @@ taskkill /IM snake-army.exe /F
 ```bash
 curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases" \
   -d "access_token=<你的令牌>" \
-  -d "tag_name=v0.2.0" \
-  -d "name=贪吃蛇 v0.2.0" \
+  -d "tag_name=v0.2.1" \
+  -d "name=贪吃蛇 v0.2.1" \
   -d "body=首个可发布版本"
 
 # 拿到 release id 之后传附件：
 curl -X POST "https://gitee.com/api/v5/repos/nxbznine_bilibili/h5-snake-army/releases/<id>/attach_files" \
   -d "access_token=<你的令牌>" \
-  -F "file=@release/snake-army-0.2.0-win-x64.zip"
+  -F "file=@release/snake-army-0.2.1-win-x64.zip"
 ```
 
 安装器（NSIS/MSI）这条路**没走**：Tauri 的打包工具要从 GitHub 现场下载，

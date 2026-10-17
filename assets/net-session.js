@@ -588,6 +588,21 @@ function netApplyCuts(list) {
     }
 }
 
+// 客机补物品出生时刻：坐标一样的沿用旧的 at，新出现的记成现在
+function carryItemAt(oldList, nextList) {
+    const oldAt = new Map();
+    for (let i = 0; i < oldList.length; i++) {
+        const o = oldList[i];
+        if (o && typeof o.at === 'number') oldAt.set(o.x + ',' + o.y, o.at);
+    }
+    for (let i = 0; i < nextList.length; i++) {
+        const n = nextList[i];
+        const at = oldAt.get(n.x + ',' + n.y);
+        n.at = (typeof at === 'number') ? at : gameNow;
+    }
+    return nextList;
+}
+
 function netSnapshot() {
     return {
         t: 'state',
@@ -652,6 +667,10 @@ function netSnapshot() {
 
 // 客机：把快照铺回本地状态，之后照常 render()，画法完全复用
 function netApplySnapshot(m) {
+    // 先把上一帧的物品列表留一份，下面按坐标对上「谁是这个快照新出现的」
+    const oldApples = apples || [];
+    const oldDrops = drops || [];
+
     gameNow = m.now;
     nowRef = gameNow;
     if (state !== 'over' && m.st === 'over' && typeof sfxOver === 'function') sfxOver();
@@ -696,16 +715,23 @@ function netApplySnapshot(m) {
         };
     });
 
-    apples = m.ap.map(function (a) { return { x: a[0], y: a[1] }; });
+    // 物品：客机自己补「出生时刻」，才能看到那个「放大回弹」的动画。
+    // 关键是「新出现的才补」—— 已经在的要把上一帧的 at 带过来，
+    // 否则每个快照（33ms）都会重新弹一次，看起来像在抽搐。
+    apples = carryItemAt(oldApples, m.ap.map(function (a) { return { x: a[0], y: a[1] }; }));
+    const oldSpeed = (powerUps && powerUps.speed) || [];
+    const oldWiden = (powerUps && powerUps.widen) || [];
     powerUps = {
-        speed: (m.pw.speed || []).map(function (a) { return { x: a[0], y: a[1] }; }),
-        widen: (m.pw.widen || []).map(function (a) { return { x: a[0], y: a[1] }; })
+        speed: carryItemAt(oldSpeed, (m.pw.speed || []).map(function (a) { return { x: a[0], y: a[1] }; })),
+        widen: carryItemAt(oldWiden, (m.pw.widen || []).map(function (a) { return { x: a[0], y: a[1] }; }))
     };
     powerRespawnAt = { speed: m.pr.speed, widen: m.pr.widen };
-    reviveItem = m.rv ? { x: m.rv[0], y: m.rv[1] } : null;
-    drops = m.dr.map(function (d) {
+    reviveItem = m.rv
+        ? carryItemAt(reviveItem ? [reviveItem] : [], [{ x: m.rv[0], y: m.rv[1] }])[0]
+        : null;
+    drops = carryItemAt(oldDrops, m.dr.map(function (d) {
         return { x: d[0], y: d[1], kind: d[2] ? 'len' : 'coin', expireAt: d[3] };
-    });
+    }));
     turrets = m.tu.map(function (t) {
         return { x: t[0], y: t[1], cooldownUntil: t[3], owner: players[t[2]] || players[0],
             upA: t[4] || 0, upB: t[5] || 0 };
