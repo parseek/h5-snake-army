@@ -886,6 +886,18 @@ function chatSend() {
 function chatSendText(text) {
     text = String(text || '').trim().slice(0, CHAT_MAX);
     if (!text) return false;
+
+    // 指令：以 / 开头（想发以 / 开头的普通消息就写 //）
+    if (text.charAt(0) === '/') {
+        if (text.charAt(1) === '/') {
+            text = text.slice(1);            // //hello -> /hello 当普通消息
+        } else {
+            if (typeof cmdRun === 'function') cmdRun(text);
+            renderChat();
+            return true;
+        }
+    }
+
     const me = chatMyName();
     chatPush(me, text, true);
     if (!netOpen) return true;                  // 单机：只显示在自己屏幕上
@@ -907,7 +919,35 @@ function toggleChat(open) {
     renderChat();
 }
 
+// 常驻小窗：只显示最近 4 条，空的时候隐藏；点一下打开完整聊天
+function renderChatFeed() {
+    const feed = document.getElementById('chatFeed');
+    if (!feed) return;
+    // 完整聊天面板开着的时候把小窗收起来，否则两块会叠在一起
+    if (chatOpen || !chatLog.length) {
+        feed.hidden = true;
+        return;
+    }
+    const tail = chatLog.slice(-4);
+    feed.hidden = false;
+    feed.innerHTML = '';
+    for (let i = 0; i < tail.length; i++) {
+        const m = tail[i];
+        const row = document.createElement('div');
+        row.className = 'feedRow' + (m.me ? ' me' : '');
+        const who = document.createElement('span');
+        who.className = 'feedWho';
+        who.textContent = (m.me ? '我' : m.name) + '：';
+        const txt = document.createElement('span');
+        txt.textContent = m.text;
+        row.appendChild(who);
+        row.appendChild(txt);
+        feed.appendChild(row);
+    }
+}
+
 function renderChat() {
+    renderChatFeed();
     const bar = document.getElementById('chatBar');
     const list = document.getElementById('chatList');
     const btn = document.getElementById('chatBtn');
@@ -916,6 +956,11 @@ function renderChat() {
     if (btn) {
         btn.textContent = chatUnread ? '\uD83D\uDCAC ' + chatUnread : '\uD83D\uDCAC';
         btn.classList.toggle('has-new', chatUnread > 0);
+    }
+    const feedEl = document.getElementById('chatFeed');
+    if (feedEl && !feedEl.dataset.wired) {
+        feedEl.dataset.wired = '1';
+        feedEl.addEventListener('click', function () { toggleChat(true); });
     }
     if (!chatOpen) return;
     if (chatShown !== chatVersion) {
@@ -971,7 +1016,8 @@ if (document.getElementById('cfgCoop')) {
     });
 }
 if (document.getElementById('chatBtn')) {
-    document.getElementById('chatBtn').addEventListener('click', function () { toggleChat(); });
+    // 注意：#chatBtn 的点击在 input.js 里已经绑过（带点按反馈）。
+    // 这里再绑一次会让一次点击触发两次切换（开→关），按钮看起来就像没反应。
     document.getElementById('chatCloseBtn').addEventListener('click', function () { toggleChat(false); });
     document.getElementById('chatSendBtn').addEventListener('click', chatSend);
     document.getElementById('chatInput').addEventListener('keydown', function (ev) {

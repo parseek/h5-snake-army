@@ -36,6 +36,8 @@ let MAX_ROWS = MODES[1].maxRows;
 
 // 加速道具（玩家和敌人蛇都能吃）
 const SPEED_FACTOR = 0.5;       // 拾取后步长乘以这个系数（0.5 = 快一倍）
+const TEAM_SPEED_MUL = 1.02;    // 全场增益道具：永久速度 ×1.02（无限叠加）
+const MIN_STEP_MS = 35;         // 步长下限：叠再多也不让一帧跑无数步（只是物理下限，不影响叠加）
 const SPEED_MS = 30000;         // 加速持续时间（毫秒）
 
 // 出生缩放动画 / 尸体掉落
@@ -75,7 +77,16 @@ const ENEMY_MAX = 5;            // 同时存在的上限
 //   blue   蓝蛇：会朝玩家开火
 const ENEMY_KINDS = {
     purple: { body: '#a24bd4', head: '#6f2da8', len: 2, stepMs: 520, shoots: false },
-    red:    { body: '#d43b2f', head: '#9e2418', len: 6, stepMs: 620, shoots: false },
+    red:    { body: '#d43b2f', head: '#9e2418', len: 9, stepMs: 620, shoots: false, bend: true },
+    // BOSS：身体画得更粗（纯视觉），每隔几节就有一个「炮口」，向多个方向放射
+    boss:   {
+        body: '#7a2fbf', head: '#4a1a75', len: 14, stepMs: 820,
+        shoots: false, bend: true,
+        wide: 1.9,              // 身体宽度倍数（纯视觉）
+        gunEvery: 3,            // 每隔几节一个炮口
+        gunDirs: 4,             // 每个炮口每轮朝几个方向射
+        gunMs: 1500             // 炮口开火间隔
+    },
     blue:   { body: '#3b7fd4', head: '#245a9e', len: 3, stepMs: 560, shoots: true }
 };
 const SPECIAL_RAMP_SEC = 35;    // 存活这么久之后红/蓝蛇才逐渐登场
@@ -119,7 +130,7 @@ const POWER_DEFS = {
     speed: { respawnMs: 10000 },
     widen: { respawnMs: 12000 }
 };
-const POWER_KINDS = ['speed', 'widen'];
+const POWER_KINDS = ['speed', 'widen', 'team'];
 
 // ------------------------------ 关卡配置 ------------------------------
 // 关卡修改器里能改的一切。默认值全部取自上面这些常量 ——
@@ -155,6 +166,7 @@ function levelDefaults() {
         // （默认 = 加这个功能之前的 POWER_DEFS.respawnMs 和「同屏 1 个」）
         i_speed_on: true, i_speed_gap: 10000, i_speed_max: 1,
         i_widen_on: true, i_widen_gap: 12000, i_widen_max: 1,
+        i_team_on: true, i_team_gap: 16000, i_team_max: 1,   // 全场增益：所有玩家一起加速
 
         // 炮塔
         turretCost: TURRET_COST,        // 建塔消耗的身长（节）
@@ -163,8 +175,24 @@ function levelDefaults() {
 
         // 撞墙 / 撞蛇：剪短多少节（从头部往尾巴方向剪，蛇头退回）。
         // 0 = 老行为，直接死。剪到比 MIN_BODY_LEN 还短也是死。
+        // 房间式 Roguelike：一局打几间（0 = 不玩，普通模式）
+        rooms: 0,
         cutWall: 0,
         cutSnake: 0,
+        noCrash: false,       // 碰撞不死：撞墙/撞蛇都被挡住，只有子弹能要命
+        // 三个基础开关（互相独立，也都在关卡编辑器里）：
+        safeWall: false,      // 撞墙不死（被挡住）
+        safeSnake: false,     // 撞蛇不死（穿过去）
+        safeBullet: false,    // 子弹不掉血
+        holdToMove: false,    // 按住方向键才走，松开就停（生存模式用）
+        obstacleRate: 0,      // 随机障碍物：占场地的百分比（0 = 关）
+        // 房间模式 / BOSS
+        reviveStart: 1,       // 每进入新的一层送几次复活
+        chestRate: 22,        // 宝箱房出现概率（%）
+        supplyRate: 34,       // 补给房出现概率（%）
+        bossRate: 4,          // BOSS 蛇出现概率（%）
+        omniMax: 0,           // 场上固定布置的「全向炮塔」数量：四面八方乱射、射程全图、伤害低
+        omniDmg: 1,           // 全向炮塔的伤害（低伤害）
         invMs: 2000,          // 被剪短之后无敌多久（0 = 不给无敌）
     };
 }
@@ -208,6 +236,7 @@ const COLOR = {
     head: '#146b14',        // 蛇头，稍深一点便于分辨
     apple: 'crimson',       // 苹果
     speed: '#00bfff',       // 加速道具
+    team: '#ffd45e',        // 全场增益道具（金色）
     widen: '#ffd21f',       // 拓宽道具
     turretBase: '#59606e',  // 炮塔底座
     turretBarrel: '#e2e8f0',// 炮管
@@ -349,9 +378,12 @@ function updateView() {
 
     // 手机端：先算「整个场地塞进屏幕」需要多小，但不小于 MOBILE_ZOOM_MIN
     const phone = !!(window.matchMedia && window.matchMedia('(pointer: coarse), (max-width: 560px)').matches);
+    const w = Math.max(1, boardWorldW());
+    const h = Math.max(1, boardWorldH());
+
+    // 房间模式：一间一间地换尺寸，所以按可用面积「塞满」——
+    // 小房间放大、大地图缩小；其它模式保持原来的 1:1，免得老玩法观感变了。
     if (phone) {
-        const w = Math.max(1, boardWorldW());
-        const h = Math.max(1, boardWorldH());
         zoom = Math.max(MOBILE_ZOOM_MIN, Math.min(1, availViewW / w, availViewH / h));
     } else {
         zoom = 1;

@@ -60,10 +60,23 @@ function regenHp(dtSec) {
 // 加速到期：步长恢复成「这个关卡的基准」。
 // 以前这里写死成默认的 500ms —— 关卡把基准调快之后（比如高铁大陆 100ms），
 // 加速一结束蛇会突然掉到 500ms，看着就是「变龟速」。
+// 玩家的「基准步长」：关卡步长 ÷ 永久速度倍率（全场增益道具叠出来的）
+function playerBaseMs(p) {
+    const mul = (p && p.permMul) || 1;
+    return Math.max(MIN_STEP_MS, levelCfg.stepMs / Math.max(0.01, mul));
+}
+
+const ROGUE_KIND_SAFE_NAME = 'safe';   // 与 rooms.js 的 ROGUE_KIND.SAFE 一致
+
+// 房间模式：这间已经清过（或起点安全屋）就不再补苹果 —— 吃完就没有
+function applesFrozen() {
+    return (typeof room !== 'undefined') && !!room && (!!room.cleared || room.kind === ROGUE_KIND_SAFE_NAME);
+}
+
 function expirePlayerBoost(p, now) {
     if (!p.boostUntil || now < p.boostUntil) return false;
     p.boostUntil = 0;
-    setStepMs(p, levelCfg.stepMs);
+    setStepMs(p, playerBaseMs(p));
     return true;
 }
 
@@ -132,6 +145,12 @@ function freeCells() {
         const list = powerList(POWER_KINDS[i]);
         for (let k = 0; k < list.length; k++) taken.add(list[k].y * COLS + list[k].x);
     }
+    // 随机障碍物：苹果、道具、掉落物、复活道具都不能刷在石头上
+    if (typeof walls !== 'undefined' && walls) {
+        for (let i = 0; i < walls.length; i++) {
+            taken.add(walls[i].y * COLS + walls[i].x);
+        }
+    }
     const out = [];
     for (let i = 0; i < COLS * ROWS; i++) {
         if (!taken.has(i)) out.push(i);
@@ -141,7 +160,7 @@ function freeCells() {
 
 function pickCell(free) {
     if (free.length === 0) return null;   // 场地已满
-    const i = free[Math.floor(Math.random() * free.length)];
+    const i = free[rndInt(free.length)];
     return { x: i % COLS, y: Math.floor(i / COLS) };
 }
 
@@ -149,6 +168,7 @@ function pickCell(free) {
 // 把苹果补到目标数量。每帧只补 maxPerTick 个 ——
 // 关卡里把苹果设成上百个时，一帧全补上会明显卡一下（每个都要扫一遍全网格）。
 function fillApples(now, maxPerTick) {
+    if (applesFrozen()) return;
     const want = appleTargetCount(now);
     let budget = Math.max(1, maxPerTick || 1);
     while (apples.length < want && budget-- > 0) {
@@ -278,6 +298,8 @@ function shiftWorld(dx, dy) {
 
 // 把场地改成 cols x rows：内容按 (dx, dy) 平移，画面变化交给 applyWidenFrame 缓入缓出
 function beginResize(cols, rows, dx, dy, now) {
+    const oldCols = COLS;
+    const oldRows = ROWS;
     widenFromCols = COLS;
     widenFromRows = ROWS;
     widenShiftX = dx;
@@ -291,6 +313,13 @@ function beginResize(cols, rows, dx, dy, now) {
     // 画布尺寸不再逐帧变（逐帧改 canvas.width 会清空画布，还费性能）
     updateView();
     widenStartAt = now || gameNow || 1;   // 由主循环逐帧推进动画
+    // 房间模式：场地变大后，门要重新贴回右边缘、洞贴回左边缘，
+    // 不然它们会停在旧尺寸的位置（看着跑到场地中间去）
+    if (typeof roomOnResize === 'function') roomOnResize(dx, dy);
+    // 随机障碍物：旧的不动，只在新增区域补刷
+    if (typeof refreshObstaclesAfterResize === 'function') {
+        refreshObstaclesAfterResize(oldCols, oldRows, dx, dy);
+    }
     syncHud();
 }
 
@@ -410,6 +439,7 @@ function makePlayer(i) {
         acc: 0,
         stepMs: levelCfg.stepMs,
         boostUntil: 0,
+        permMul: 1,          // 全场增益道具叠出来的永久速度倍率
         coins: 0,
         score: 0,
         spawnAt: -1,
@@ -457,6 +487,7 @@ function reset() {
     drops = [];
     corpses = [];
     cutFx = [];
+    if (typeof rogueReset === 'function') rogueReset();
     turrets = [];
     bullets = [];
 
@@ -465,7 +496,9 @@ function reset() {
         const kind = POWER_KINDS[i];
         for (let n = 0; n < powerMax(kind); n++) spawnPowerUp(kind);   // 同屏上限几个就铺几个
     }
+    resetObstacles(null);    // 随机障碍物（obstacleRate > 0 时）
     spawnEnemy(0);
+    spawnOmniTurrets();      // 关卡里的全向炮塔（omniMax > 0 时）
     syncHud();
 }
 
@@ -478,6 +511,7 @@ function syncPlayingClass() {
 
 function start(m, tm, arena) {
     sfxStart();
+    if (typeof rndReset === 'function') rndReset();   // 每开一局一颗新种子（存档会记下它）
     if (MODES[m]) mode = m;
     if (TEAM_MODES[tm]) teamMode = tm;
     levelCfg.team = teamMode;      // 面板上显示的、以及发给客机的，都是这一份
@@ -509,6 +543,9 @@ function start(m, tm, arena) {
     last = performance.now();
     netAsk = null;
     syncNetBar();
+
+    // 房间模式：普通开局布置完之后，由房间系统重新布置第一间
+    if (typeof rogueOn === 'function' && rogueOn()) rogueStart();
 }
 
 // 开局就把开始面板和联机面板一起收起来。
@@ -521,6 +558,8 @@ function hideStartUi() {
 
 // 回到开始面板（Esc 或开局时）
 function showMenu() {
+    // 本地正在玩就顺手存一局，回来点「继续上一局」就能接着玩
+    if (typeof saveRun === 'function' && typeof canSaveRun === 'function' && canSaveRun()) saveRun();
     if (typeof toggleCfgPanel === 'function') toggleCfgPanel(false);   // 编辑器别叠在菜单上
     if (typeof toggleChat === 'function') toggleChat(false);
     lanClearRoom();
@@ -545,6 +584,18 @@ function turn(p, name) {
     if (dir.x === -ref.x && dir.y === -ref.y) return;   // 禁止 180° 掉头
     if (p.queue.length >= 2) return;
 
+    // 「按住才走」模式（生存）：
+    //   · 站着（这一格还没开始走）时 -> 立刻转头
+    //   · 正在走（动画没完）时 -> 这一次按键先记下来，等这一格走完再转（不跳回、不插队）
+    if (levelCfg.holdToMove && state === 'running') {
+        p.wantDir = dir;
+        if (p.acc <= 1) {
+            p.dir = dir;
+            p.queue.length = 0;
+        }
+        return;
+    }
+
     p.queue.push(dir);
 }
 
@@ -566,10 +617,23 @@ function pickPowerUp(p, kind, now) {
 
     if (kind === 'speed') {
         // 步长乘以 SPEED_FACTOR，并从现在起持续关卡设定的 boostMs
-        setStepMs(p, levelCfg.stepMs * SPEED_FACTOR);
+        setStepMs(p, playerBaseMs(p) * SPEED_FACTOR);
         p.boostUntil = now + levelCfg.boostMs;   // 重复拾取只刷新时间，不越叠越快
     } else if (kind === 'widen') {
         widenField(now);
+    } else if (kind === 'team') {
+        // 全场增益：所有玩家「永久」速度 ×1.1（可叠加，有上限）
+        for (let i = 0; i < players.length; i++) {
+            const pl = players[i];
+            if (!pl) continue;
+            pl.permMul = (pl.permMul || 1) * TEAM_SPEED_MUL;   // 无限叠加
+            const boosted = (pl.boostUntil && pl.boostUntil > now);
+            setStepMs(pl, playerBaseMs(pl) * (boosted ? SPEED_FACTOR : 1));
+        }
+        if (typeof addToast === 'function') {
+            const pct = Math.round(((players[0] && players[0].permMul) || 1) * 100);
+            addToast('全场永久加速 ×' + (pct / 100).toFixed(2));
+        }
     }
 }
 
@@ -581,7 +645,20 @@ function invincible(p, now) {
     return !!p.invUntil && now < p.invUntil;
 }
 
+// 这一步「不成立」：不移动、不剪、不死。用于「无敌撞墙」和关卡的「碰撞不死」。
+// 关键：玩家按下的转向在 queue 里，正常是 step 末尾才取出来的；
+// 这里提前返回就必须自己取一次，否则顶着墙就永远转不走。
+function blockStep(p) {
+    // 被挡住时走不到 step 的末尾，这里自己把待生效的转向取一次，
+    // 否则顶着墙/贴着蛇就永远转不走。
+    if (p.queue && p.queue.length) p.dir = p.queue.shift();
+    p.blocked = true;
+    p.acc = 0;
+    return false;
+}
+
 function crashPlayer(p, cut, now) {
+    if (!cut || cut <= 0) return killPlayer(p, now);
     if (!cut || cut <= 0) return killPlayer(p, now);
 
     const keep = p.body.length - cut;
@@ -614,14 +691,17 @@ function crashPlayer(p, cut, now) {
 
 function step(p, now) {
     if (!p.alive) return;
+    p.blocked = false;   // 这一步能正常走，清除「被挡住」标记
 
     // dir 在上一步落子后就定好了，所以蛇头动画的终点就是这里的落点，
     // 转弯时不会出现「头已经伸到 A 格、逻辑却走到 B 格」的跳变
     const head = cell(p.body[0].x + p.dir.x, p.body[0].y + p.dir.y);
 
     // 撞墙：可以把蛇剪短（剪到最短就死）；无敌期间这一步不前进
-    if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS) {
+    if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS || wallAt(head.x, head.y)) {
         if (invincible(p, now)) return;
+        const noDie = (levelCfg.safeWall === true) || (typeof levelCfg !== 'undefined' && levelCfg.noCrash);
+        if (noDie) return blockStep(p);
         return crashPlayer(p, Math.round(levelCfg.cutWall) || 0, now);
     }
 
@@ -652,23 +732,37 @@ function step(p, now) {
     const body = willGrow ? p.body : p.body.slice(0, p.body.length - 1);
     for (let i = 0; i < body.length; i++) {
         if (body[i].x === head.x && body[i].y === head.y) {
-            if (inv) break;                       // 无敌：从自己身上穿过去
+            if (inv) break;                                                // 无敌：穿过去
+            if (levelCfg.safeSnake === true) break;  // 作弊：穿过去
+            if (typeof levelCfg !== 'undefined' && levelCfg.noCrash) return blockStep(p);   // 碰撞不死：挡住
             return crashPlayer(p, snakeCut, now);
         }
     }
 
     // 撞到敌人蛇、另一位玩家、或者任意炮塔
-    if (enemyAt(head.x, head.y, null)) {
-        if (!inv) return crashPlayer(p, snakeCut, now);
-    } else if (playerAt(head.x, head.y, p)) {
-        if (!inv) return crashPlayer(p, snakeCut, now);
-    } else if (occupiedByTurret(head.x, head.y)) {
-        if (!inv) return killPlayer(p, now);
+    const godPass = (levelCfg.safeSnake === true);          // 作弊：穿过去
+    const noDieSnake = (typeof levelCfg !== 'undefined' && levelCfg.noCrash);    // 关卡：挡住但不会死
+    const turretHit = occupiedByTurret(head.x, head.y);
+    const snakeHit = enemyAt(head.x, head.y, null) || playerAt(head.x, head.y, p) || turretHit;
+    if (snakeHit) {
+        if (inv || godPass) {
+            // 无敌 / 作弊：穿过去
+        } else if (noDieSnake) {
+            return blockStep(p);
+        } else if (turretHit) {
+            return killPlayer(p, now);
+        } else {
+            return crashPlayer(p, snakeCut, now);
+        }
     }
 
     p.body.unshift(head);
     sfxStep(p.stepMs);                 // 走一步一声（很轻，带节流）
-    if (willGrow) {
+
+    // 还在从洞里往外拉：这一步不缩尾巴，而是多拉出一节
+    const pulling = (typeof roomPullOne === 'function') && roomPullOne(p);
+
+    if (willGrow || pulling) {
         // 变长时给尾巴补一格血。血量按「从蛇头数第几节」对齐，
         // 所以蛇往前走时，受伤的那一节会跟着身体一起前进
         p.hp.push(levelCfg.hp0);
@@ -679,7 +773,8 @@ function step(p, now) {
     if (willEat) {
         apples.splice(eatIdx, 1);
         p.score += 1;
-        spawnApple();   // 吃掉一个补一个
+        if (!applesFrozen()) spawnApple();   // 吃掉一个补一个（清过的房间不补）
+        if (typeof roomAppleEaten === 'function') roomAppleEaten();
         sfxEat(p.score); // 音高随分数往上走，连着吃不会腻
         syncHud();
     }
@@ -695,13 +790,22 @@ function step(p, now) {
 
     if (hitPower) pickPowerUp(p, hitPower, now);
 
-    // 脚下的复活道具：把出局的队友救回来
+    // 落子之后再取下一个方向：这一步的动画是按旧方向画的，
+    // 必须等它走完再换方向，否则头会斜着跳一格。
+    if (p.queue.length) p.dir = p.queue.shift();
+
+    // 脚下的复活道具：房间模式里攒一次自我复活；否则把出局的队友救回来
     if (reviveItem && reviveItem.x === head.x && reviveItem.y === head.y) {
-        if (revivePartner(p, now)) reviveItem = null;
+        if (typeof room !== 'undefined' && room && roomRun) {
+            roomRun.revives = (roomRun.revives || 0) + 1;
+            reviveItem = null;
+            if (typeof addToast === 'function') addToast('复活次数 +1（共 ' + roomRun.revives + ' 次）');
+            syncHud();
+        } else if (revivePartner(p, now)) {
+            reviveItem = null;
+        }
     }
 
-    // 落子之后再取下一个方向，下一段动画才能提前知道该往哪拐
-    if (p.queue.length) p.dir = p.queue.shift();
 }
 
 // 这一格被哪位玩家的身体占着（except 用来排除自己）
@@ -724,6 +828,10 @@ function lastDrawnE(o) {
 
 function killPlayer(p, now) {
     if (!p.alive) return;
+    // 房间模式：还有复活次数就原地复生（不进入死亡流程）
+    if (typeof room !== 'undefined' && room && typeof roomTryRevive === 'function') {
+        if (roomTryRevive(p, now)) return;
+    }
     // 死亡这一步之前，帧循环已经把 acc 归零了（acc -= stepMs 在 step() 之前），
     // 所以此刻的 progress() 其实是 0 —— 必须用「上一帧真正画到哪」(drawnE)，
     // 否则蛇头会从 0.9 格的位置一下跳回整格。
@@ -773,7 +881,7 @@ function spawnReviveItem() {
 
     let spot = null;
     for (let tries = 0; tries < 200 && !spot; tries++) {
-        const i = free[Math.floor(Math.random() * free.length)];
+        const i = free[rndInt(free.length)];
         const x = i % COLS;
         const y = Math.floor(i / COLS);
         let ok = true;
@@ -793,7 +901,7 @@ function findLineSpot(len) {
     if (free.length < len + 1) return null;
 
     for (let tries = 0; tries < 200; tries++) {
-        const i = free[Math.floor(Math.random() * free.length)];
+        const i = free[rndInt(free.length)];
         const hx = i % COLS;
         const hy = Math.floor(i / COLS);
 
@@ -947,6 +1055,13 @@ function buildBlockMap(self) {
         for (let i = 0; i < n; i++) {
             if (other === self && i === n - 1) continue;
             blocked[other.body[i].y * COLS + other.body[i].x] = 1;
+        }
+    }
+    // 随机障碍物：AI 当成走不通，会自己绕开（不然一头撞死太蠢）
+    if (typeof walls !== 'undefined' && walls) {
+        for (let i = 0; i < walls.length; i++) {
+            const w = walls[i];
+            if (w.x >= 0 && w.y >= 0 && w.x < COLS && w.y < ROWS) blocked[w.y * COLS + w.x] = 1;
         }
     }
     return blocked;
@@ -1179,22 +1294,28 @@ function enemyBaseStep(def) {
 // 越到后期，红蛇 / 蓝蛇出现得越多
 function pickEnemyKind(now) {
     const ramp = Math.min(1, Math.max(0, (now - runStartAt) / (SPECIAL_RAMP_SEC * 1000)));
-    const r = Math.random();
-    if (r < RED_RATE * ramp) return 'red';
-    if (r < (RED_RATE + BLUE_RATE) * ramp) return 'blue';
+    const r = rnd();
+    // BOSS：后期且场上没有别的 BOSS 时，小概率刷（4%）
+    const hasBoss = enemies.some(function (e) { return e.kind === 'boss'; });
+    const bossP = Math.max(0, Math.min(30, Number(levelCfg.bossRate) || 0)) / 100;
+    if (!hasBoss && ramp >= 0.5 && r < bossP) return 'boss';
+    if (r < bossP + RED_RATE * ramp) return 'red';
+    if (r < bossP + (RED_RATE + BLUE_RATE) * ramp) return 'blue';
     return 'purple';
 }
 
-function spawnEnemy(now) {
-    if (!levelCfg.enemies) return false;           // 主机关了敌人就不再刷
-    const kind = pickEnemyKind(now);
+// forceKind：房间模式按房间蓝图指定种类；不传就按难度随机
+function spawnEnemy(now, forceKind) {
+    if (forceKind && !ENEMY_KINDS[forceKind]) forceKind = null;
+    if (!levelCfg.enemies && !forceKind) return false;   // 主机关了敌人就不再刷
+    const kind = forceKind || pickEnemyKind(now);
     const def = ENEMY_KINDS[kind];
 
     const free = freeCells();
     if (free.length < def.len + 1) return false;
 
     for (let tries = 0; tries < 200; tries++) {
-        const i = free[Math.floor(Math.random() * free.length)];
+        const i = free[rndInt(free.length)];
         const head = cell(i % COLS, Math.floor(i / COLS));
 
         // 别在任何一位玩家脸上刷出来
@@ -1212,15 +1333,32 @@ function spawnEnemy(now) {
         for (let k = 0; k < STEP_DIRS.length; k++) {
             const d = STEP_DIRS[k];
 
-            // 整条身体都得躺在空格里 —— 大红蛇生来就长，所以这一步要一次摆下 len 节
+            // 整条身体都得躺在空格里 —— 大红蛇生来就长，所以这一步要一次摆下 len 节。
+            // def.bend：出生时带个弯（前几节沿一个方向，拐一次，再摆完），看起来像条蛇而不是一根棍。
             const body = [head];
             let ok = true;
+            let walkDir = d;
+            let stepsInLeg = 0;
             for (let q = 1; q < def.len; q++) {
-                const bx = head.x - d.x * q;
-                const by = head.y - d.y * q;
+                // 走够一段就拐一次（只拐一次，拐成 90°）
+                if (def.bend && q === Math.max(3, Math.floor(def.len / 2))) {
+                    const turnLeft = (rnd() < 0.5);
+                    walkDir = turnLeft ? { x: walkDir.y, y: -walkDir.x } : { x: -walkDir.y, y: walkDir.x };
+                }
+                const bx = body[body.length - 1].x - walkDir.x;
+                const by = body[body.length - 1].y - walkDir.y;
+                stepsInLeg++;
                 if (bx < 0 || by < 0 || bx >= COLS || by >= ROWS ||
                     free.indexOf(by * COLS + bx) === -1) { ok = false; break; }
                 body.push(cell(bx, by));
+            }
+            // 拐的那一下可能把身体折到自己身上，简单查一次
+            if (ok) {
+                for (let a2 = 0; a2 < body.length && ok; a2++) {
+                    for (let b2 = a2 + 1; b2 < body.length; b2++) {
+                        if (body[a2].x === body[b2].x && body[a2].y === body[b2].y) { ok = false; break; }
+                    }
+                }
             }
             if (!ok) continue;
 
@@ -1323,13 +1461,13 @@ function dropLoot(body, now) {
         if (enemyAt(c.x, c.y, null)) continue;
 
         // 每一节按概率掉（第一节必掉，保证短蛇也有收获）
-        if (i > 0 && dropped > 0 && Math.random() > DROP_CELL_CHANCE) continue;
+        if (i > 0 && dropped > 0 && rnd() > DROP_CELL_CHANCE) continue;
 
-        const life = DROP_LIFE_MS * (1 - DROP_LIFE_JITTER / 2 + Math.random() * DROP_LIFE_JITTER);
+        const life = DROP_LIFE_MS * (1 - DROP_LIFE_JITTER / 2 + rnd() * DROP_LIFE_JITTER);
         drops.push({
             x: c.x,
             y: c.y,
-            kind: (Math.random() < DROP_LEN_CHANCE) ? 'len' : 'coin',
+            kind: (rnd() < DROP_LEN_CHANCE) ? 'len' : 'coin',
             expireAt: now + Math.round(life),
             at: now
         });
@@ -1347,6 +1485,9 @@ function setEnemyStepMs(en, next) {
 // 到期的补位 + 难度上来了就补新蛇
 function updateEnemySpawns(now) {
     if (!levelCfg.enemies) return;
+    // 房间模式：这一间的敌人是固定的，清光就是清光，不许再按难度补位
+    // （以前这里会一直补，导致「剩 0 敌」永远到不了 -> 一间房变成无尽）
+    if (typeof rogueOn === 'function' && rogueOn() && typeof room !== 'undefined' && room) return;
     for (let i = enemyRespawns.length - 1; i >= 0; i--) {
         if (now < enemyRespawns[i]) continue;
         enemyRespawns.splice(i, 1);
@@ -1366,6 +1507,7 @@ function stepEnemy(self, now) {
 
     // 撞墙 / 咬到自己 / 撞到玩家、炮塔或别的敌人，都算它阵亡
     if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS ||
+        wallAt(head.x, head.y) ||
         ownBodyAt(self.body, head.x, head.y, true) ||
         occupiedByPlayer(head.x, head.y) ||
         occupiedByTurret(head.x, head.y) ||
@@ -1395,7 +1537,7 @@ function stepEnemy(self, now) {
         self.hp.push(levelCfg.hp0);   // 变长时尾巴补一格血
         if (willEat) {
             apples.splice(eatIdx, 1);
-            spawnApple();               // 苹果被它抢走了，补一个新的
+            if (!applesFrozen()) spawnApple();   // 苹果被它抢走了，补一个新的（清过的房间不补）
         }
     } else {
         self.body.pop();
@@ -1437,6 +1579,96 @@ function canBuild(p) {
         p.body.length >= levelCfg.turretCost + 2 &&   // 建完至少还剩两节
         turretCount(p) < levelCfg.turretMax &&
         p.coins >= levelCfg.turretCoins;
+}
+
+// 随机障碍物：按场地百分比随机摆石块（避开玩家起点和传送门）
+function wallAt(x, y) {
+    if (!walls) return false;
+    for (let i = 0; i < walls.length; i++) {
+        if (walls[i].x === x && walls[i].y === y) return true;
+    }
+    return false;
+}
+
+// 场地变大之后：旧区域的石头原样不动，只在「新增的区域」里补石头
+function refreshObstaclesAfterResize(oldCols, oldRows, dx, dy) {
+    // 石头要跟着世界一起位移 —— 否则看起来像「往左上角飘」
+    if (walls && (dx || dy)) {
+        for (let i = 0; i < walls.length; i++) {
+            walls[i].x += dx || 0;
+            walls[i].y += dy || 0;
+        }
+    }
+    const rate = Math.max(0, Math.min(20, Number(levelCfg.obstacleRate) || 0));
+    if (rate <= 0 || !walls) return;
+    const want = Math.round(COLS * ROWS * rate / 100);
+    if (walls.length >= want) return;
+
+    // 旧区域在「新的坐标系」里的范围（内容会整体位移 dx/dy）
+    const x0 = dx || 0;
+    const y0 = dy || 0;
+    const x1 = x0 + oldCols;
+    const y1 = y0 + oldRows;
+
+    for (let tries = 0; tries < want * 40 && walls.length < want; tries++) {
+        const x = rndInt(COLS);
+        const y = rndInt(ROWS);
+        if (x >= x0 && x < x1 && y >= y0 && y < y1) continue;   // 旧区域：保持不动
+        if (wallAt(x, y)) continue;
+        walls.push({ x: x, y: y });
+    }
+}
+
+function resetObstacles(portals) {
+    walls = [];
+    const rate = Math.max(0, Math.min(20, Number(levelCfg.obstacleRate) || 0));
+    if (rate <= 0) return;
+    const want = Math.round(COLS * ROWS * rate / 100);
+    if (!want) return;
+
+    const banned = new Set();
+    for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        for (let k = 0; k < p.body.length; k++) banned.add(p.body[k].y * COLS + p.body[k].x);
+    }
+    if (portals) {
+        for (let i = 0; i < portals.length; i++) {
+            banned.add(portals[i].y * COLS + portals[i].x);
+            // 门前留一格，别把门堵死
+            banned.add(portals[i].y * COLS + Math.max(0, Math.min(COLS - 1, portals[i].x + 1)));
+        }
+    }
+
+    for (let tries = 0; tries < want * 30 && walls.length < want; tries++) {
+        const x = rndInt(COLS);
+        const y = rndInt(ROWS);
+        if (banned.has(y * COLS + x)) continue;
+        if (wallAt(x, y)) continue;
+        walls.push({ x: x, y: y });
+    }
+}
+
+// 全向炮塔：射程全图、八个方向轮流乱射、伤害低。它不分敌我 —— 打玩家也打敌人。
+const OMNI_DIRS = 8;
+const OMNI_COOLDOWN = 900;
+
+function spawnOmniTurrets() {
+    const n = Math.max(0, Math.min(8, Math.round(levelCfg.omniMax) || 0));
+    for (let i = 0; i < n; i++) {
+        // 第一座固定放在场地正中心，其余随机
+        const spot = (i === 0)
+            ? { x: Math.floor(COLS / 2), y: Math.floor(ROWS / 2) }
+            : pickCell(freeCells());
+        if (!spot) break;
+        turrets.push({
+            x: spot.x, y: spot.y,
+            cooldownUntil: gameNow + 600 + i * 300,   // 错开起手，别同时喷
+            owner: null, upA: 0, upB: 0,
+            omni: true,
+            dmg: Math.max(1, Math.round(levelCfg.omniDmg) || 1),
+            spin: i * 0.4
+        });
+    }
 }
 
 // 从自己尾巴截下 turretCost 节，塔就建在被截掉的尾尖那一格
@@ -1570,6 +1802,29 @@ function updateTurrets(now) {
         const t = turrets[i];
         if (now < t.cooldownUntil) continue;
 
+        // 全向炮塔：不看目标，八个方向轮流喷（射程全图，伤害低）
+        if (t.omni) {
+            t.cooldownUntil = now + OMNI_COOLDOWN;
+            t.spin = (t.spin || 0) + 1;
+            sfxShoot();
+            const sp = BULLET_SPEED * 0.85;
+            for (let d = 0; d < OMNI_DIRS; d++) {
+                const ang = (d / OMNI_DIRS) * Math.PI * 2 + t.spin * 0.22;
+                bullets.push({
+                    from: 'player',
+                    owner: null,
+                    omni: true,          // 无差别：打玩家也打敌人
+                    dmg: t.dmg || 1,
+                    homing: 0,
+                    x: t.x + 0.5,
+                    y: t.y + 0.5,
+                    vx: Math.cos(ang) * sp,
+                    vy: Math.sin(ang) * sp
+                });
+            }
+            continue;
+        }
+
         const target = turretTarget(t);
         if (!target || target.d < 0.0001) continue;
 
@@ -1587,6 +1842,35 @@ function updateTurrets(now) {
             vy: ((target.y - t.y) / target.d) * sp
         });
     }
+}
+
+// BOSS 的各个炮口朝多个方向放射（不分敌我，打玩家也打周边的蛇）
+function fireBossVolley(en, now) {
+    const def = enemyDef(en);
+    const dirs = Math.max(1, Math.round(def.gunDirs) || 4);
+    const every = Math.max(1, Math.round(def.gunEvery) || 3);
+    let fired = 0;
+    for (let i = 1; i < en.body.length; i += every) {
+        const c = en.body[i];
+        if (!c) continue;
+        // 每个炮口的基础角度：跟身体走向错开，避免所有子弹重合
+        const base = (i * 0.7) + now * 0.0006;
+        for (let d = 0; d < dirs; d++) {
+            const ang = base + (d / dirs) * Math.PI * 2;
+            bullets.push({
+                from: 'enemy',
+                owner: null,
+                dmg: 1,
+                homing: 0,
+                x: c.x + 0.5,
+                y: c.y + 0.5,
+                vx: Math.cos(ang) * BULLET_SPEED * 0.8,
+                vy: Math.sin(ang) * BULLET_SPEED * 0.8
+            });
+            fired++;
+        }
+    }
+    return fired;
 }
 
 // 离某点最近的敌人蛇头（跟踪子弹用）
@@ -1634,6 +1918,13 @@ function updateBullets(dtSec, now) {
         const cx = Math.floor(b.x);
         const cy = Math.floor(b.y);
 
+        // 撞到随机障碍物：子弹消失（留个火花音效）
+        if (cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS && wallAt(cx, cy)) {
+            bullets.splice(i, 1);
+            if (typeof sfxHit === 'function') sfxHit();
+            continue;
+        }
+
         if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) {
             bullets.splice(i, 1);
             continue;
@@ -1650,6 +1941,25 @@ function updateBullets(dtSec, now) {
                     break;
                 }
             }
+            // 全向炮塔的子弹「无差别」：先看玩家（连塔主/同伴都打），再看敌人
+            if (b.omni) {
+                let hitQ = false;
+                for (let k = 0; k < players.length; k++) {
+                    const q = players[k];
+                    if (!q || !q.alive) continue;
+                    const pIdx = bodyIndexAt(q.body, cx, cy);
+                    if (pIdx === -1) continue;
+                    bullets.splice(i, 1);
+                    sfxHit();
+                    if (levelCfg.safeBullet === true) { hitQ = true; break; }
+                    if (invincible(q, now)) { hitQ = true; break; }
+                    if (damageBody(q.body, q.hp, pIdx, now, b.dmg || 1)) killPlayer(q, now);
+                    hitQ = true;
+                    break;
+                }
+                if (hitQ) continue;
+            }
+
             if (hitEnemy) {
                 bullets.splice(i, 1);
                 sfxHit();
@@ -1679,6 +1989,7 @@ function updateBullets(dtSec, now) {
                 if (pIdx === -1) continue;
                 bullets.splice(i, 1);
                 if (invincible(q, now)) break;
+                if (levelCfg.safeBullet === true) break;
                 if (damageBody(q.body, q.hp, pIdx, now)) killPlayer(q, now);
                 break;
             }

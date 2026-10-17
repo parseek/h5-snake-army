@@ -65,6 +65,9 @@ let powerRespawnAt; // 各道具的重生时间点
 let enemies;        // 敌人蛇数组 [{ body, dir, acc, stepMs, spawnAt, boostUntil }]
 let enemyRespawns;  // 待补位的重生时间点
 let runStartAt;     // 本局开始时间，用来爬难度
+let walls;          // 随机障碍物 [{ x, y }]
+let heldDirs;       // 当前按住的方向（「按住才走」用）{ up, down, left, right }
+heldDirs = { up: false, down: false, left: false, right: false };
 let drops;          // 敌人尸体掉落物 [{ x, y, kind, expireAt }]
 let corpses;
 // 开始页的设置（都不开局，只是记着「本地」按下去时用哪套）

@@ -1,7 +1,7 @@
 {
   "name": "snake-army",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "贪吃蛇 · Canvas 版，用 Tauri 打包成桌面程序；前端本身仍是纯静态页面",
   "scripts": {
     "sync": "node scripts/sync-web.mjs",

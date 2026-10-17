@@ -11,6 +11,7 @@ const LEVEL_FIELDS = [
     { key: 'rows', label: '场地高', type: 'num', min: ARENA_MIN_ROWS, max: ARENA_MAX_ROWS, hint: '调试用' },
     { key: 'team', label: '模式', type: 'team' },
     { key: 'maxPlayers', label: '人数上限', type: 'num', min: 2, max: 6, hint: '开房时定' },
+    { key: 'rooms', label: '房间模式', type: 'num', min: 0, max: 12, unit: '间', hint: '0 = 不玩，Roguelike' },
 
     { sec: '蛇' },
     { key: 'len0', label: '初始身长', type: 'num', min: 2, max: 12, unit: '节', live: 'restart' },
@@ -28,6 +29,20 @@ const LEVEL_FIELDS = [
     { key: 'boostMs', label: '加速时长', type: 'num', min: 1000, max: 120000, step: 1000, hint: '毫秒' },
     { key: 'powerGap', label: '道具刷新', type: 'num', min: 10, max: 250, step: 5, hint: '%，越小越快' },
     { key: 'revive', label: '复活道具', type: 'bool' },
+    { key: 'noCrash', label: '碰撞不死', type: 'bool', hint: '撞墙/撞蛇都被挡住；只能被子弹打死' },
+    { key: 'safeWall', label: '撞墙不死', type: 'bool', hint: '基础开关：撞墙被挡住、不扣血' },
+    { key: 'safeSnake', label: '撞蛇不死', type: 'bool', hint: '基础开关：撞蛇直接穿过去' },
+    { key: 'safeBullet', label: '子弹不伤', type: 'bool', hint: '基础开关：子弹打不掉血' },
+    { key: 'holdToMove', label: '按住才走', type: 'bool', hint: '按住方向键才前进，松开就停下（生存模式用）' },
+    { key: 'obstacleRate', label: '随机障碍物', type: 'num', min: 0, max: 20, unit: '%', hint: '按场地百分比随机摆石块，撞上去按「撞墙」处理' },
+
+    { sec: '房间模式 / BOSS' },
+    { key: 'reviveStart', label: '每层赠送复活', type: 'num', min: 0, max: 5, unit: '次', hint: '进入新的一层时赠送的复活次数' },
+    { key: 'chestRate', label: '宝箱房概率', type: 'num', min: 0, max: 100, unit: '%' },
+    { key: 'supplyRate', label: '补给房概率', type: 'num', min: 0, max: 100, unit: '%' },
+    { key: 'bossRate', label: 'BOSS 出现概率', type: 'num', min: 0, max: 30, unit: '%', hint: '普通模式里 BOSS 蛇的刷新概率' },
+    { key: 'omniMax', label: '全向炮塔', type: 'num', min: 0, max: 8, unit: '座', hint: '固定炮塔：向四面八方乱射、射程全图、伤害低' },
+    { key: 'omniDmg', label: '全向炮塔伤害', type: 'num', min: 1, max: 3, hint: '每发子弹的伤害' },
     { key: 'cutWall', label: '撞墙剪短', type: 'num', min: 0, max: 10, hint: '节（0 = 撞死）' },
     { key: 'cutSnake', label: '撞蛇剪短', type: 'num', min: 0, max: 10, hint: '节（0 = 撞死）' },
     { key: 'invMs', label: '剪短后无敌', type: 'num', min: 0, max: 10000, step: 500, hint: '毫秒（0 = 不给）' },
@@ -46,7 +61,8 @@ const LEVEL_FIELDS = [
 // 关卡表、输入框、短码打包都跟着走。
 const ITEM_DEFS = [
     { kind: 'speed', label: '加速道具' },
-    { kind: 'widen', label: '拓宽道具' }
+    { kind: 'widen', label: '拓宽道具' },
+    { kind: 'team', label: '全场增益道具' }
 ];
 
 LEVEL_FIELDS.push({ sec: '每种道具' });
@@ -94,11 +110,25 @@ function buildLevelPage() {
         }
     };
 
+    // 每个「分节」是一个可以单独显示的标签页
+    const sections = [];
+    let openSec = false;
+    const closeSec = function () {
+        if (openSec) {
+            closeRow();
+            out.push('</div>');
+            openSec = false;
+        }
+    };
+
     for (let i = 0; i < LEVEL_FIELDS.length; i++) {
         const f = LEVEL_FIELDS[i];
         if (f.sec) {
-            closeRow();
-            out.push('<div class="tip sec">' + f.sec + '</div>');
+            closeSec();
+            const tabId = 'sec' + sections.length;
+            sections.push({ id: tabId, label: f.sec });
+            out.push('<div class="cfgSec" data-tab="' + tabId + '"><div class="tip sec">' + f.sec + '</div>');
+            openSec = true;
             continue;
         }
         if (f.type === 'team') {
@@ -110,7 +140,7 @@ function buildLevelPage() {
         }
         if (f.type === 'bool') {
             closeRow();
-            out.push('<div class="row"><button class="startBtn small" id="' + cfgId(f.key) + '"></button></div>');
+            out.push('<div class="row"><button class="startBtn small" id="' + cfgId(f.key) + '" data-icon="' + f.key + '"></button></div>');
             continue;
         }
         if (f.type === 'text') {
@@ -123,17 +153,68 @@ function buildLevelPage() {
             out.push('<div class="row">');
             row = true;
         }
-        out.push('<label class="field"><span>' + f.label +
+        out.push('<label class="field"><span>' + (typeof fieldIcon === 'function' ? fieldIcon(f.key) : '') + f.label +
             (f.hint ? ' <i>' + f.hint + '</i>' : '') + '</span>' +
             '<input id="' + cfgId(f.key) + '" class="netIce portInput" type="number" min="' + f.min +
             '" max="' + f.max + '" step="' + (f.step || 1) + '" /></label>');
     }
-    closeRow();
+    closeSec();
     body.innerHTML = out.join('');
+    cfgSections = sections;
+    buildCfgTabs();
     wireLevelPage();
     buildPresetBar();
     buildStartPresets();
     buildCodeBar();
+}
+
+// ------------------------------ 标签页 ------------------------------
+// PC 端整块是右侧栏、手机端是底部抽屉；内容按「分节」切成一页一页，
+// 免得四十个旋钮排成一条长龙。前两页是预设和短码（index.html 里的静态块）。
+let cfgSections = [];
+let cfgTab = 'preset';
+
+const CFG_FIXED_TABS = [
+    { id: 'preset', label: '预设' },
+    { id: 'share', label: '短码' }
+];
+
+function buildCfgTabs() {
+    const bar = document.getElementById('cfgTabs');
+    if (!bar) return;
+    const all = CFG_FIXED_TABS.concat(cfgSections);
+    if (!all.some(function (t) { return t.id === cfgTab; })) cfgTab = 'preset';
+
+    bar.innerHTML = '';
+    for (let i = 0; i < all.length; i++) {
+        (function (t) {
+            const b = document.createElement('button');
+            b.className = 'cfgTab';
+            b.type = 'button';
+            b.textContent = t.label;
+            b.setAttribute('data-tab', t.id);
+            b.addEventListener('click', function () { selectCfgTab(t.id); });
+            bar.appendChild(b);
+        })(all[i]);
+    }
+    selectCfgTab(cfgTab);
+}
+
+function selectCfgTab(id) {
+    cfgTab = id;
+    const bar = document.getElementById('cfgTabs');
+    if (bar) {
+        const btns = bar.querySelectorAll('.cfgTab');
+        for (let i = 0; i < btns.length; i++) {
+            btns[i].classList.toggle('is-on', btns[i].getAttribute('data-tab') === id);
+        }
+    }
+    const secs = document.querySelectorAll('#cfgPanel .cfgSec');
+    for (let i = 0; i < secs.length; i++) {
+        secs[i].classList.toggle('is-on', secs[i].getAttribute('data-tab') === id);
+    }
+    const scroll = document.getElementById('cfgScroll');
+    if (scroll) scroll.scrollTop = 0;
 }
 
 function wireLevelPage() {
@@ -189,7 +270,8 @@ function syncCfgPanel() {
         if (f.type === 'bool') {
             const on = !!levelCfg[f.key];
             el.classList.toggle('is-on', on);
-            el.textContent = f.label + '：' + (on ? '开' : '关');
+            const ico = (typeof fieldIcon === 'function') ? fieldIcon(f.key) : '';
+            el.innerHTML = ico + f.label + '：' + (on ? '开' : '关');
         } else if (document.activeElement !== el && el.value !== String(levelCfg[f.key])) {
             el.value = levelCfg[f.key];     // 正在输入的那个框别去动它
         }
@@ -288,6 +370,7 @@ function toggleCfgPanel(open) {
 
     panel.hidden = !want;
     cfgOpen = want;
+    document.body.classList.toggle('cfg-open', want);
     if (want) {
         const netPanel = document.getElementById('netPanel');
         cfgBackToNet = !!(netPanel && !netPanel.hidden);
@@ -321,10 +404,11 @@ const LEVEL_PRESETS = [
     { id: 'classic', name: '经典', note: '默认那套：15×15 慢慢吃', cfg: {} },
     { id: 'brawl', name: '大乱斗', note: '80×40 快节奏，满场敌人和苹果',
       cfg: { cols: 80, rows: 40, stepMs: 380, apples: 8, enemyMax: 12, enemyGap: 3000, turretMax: 8 } },
-    { id: 'survive', name: '生存', note: '40×30，血厚、苹果少、敌人不断补；撞墙 / 撞蛇各剪短 3 节',
+    { id: 'survive', name: '生存', note: '40×30，血厚、苹果少、敌人不断补；按住方向键才走；撞墙 / 撞蛇各剪短 3 节',
       cfg: { cols: 40, rows: 30, stepMs: 450, hp0: 3, apples: 2, enemyMax: 8, enemyGap: 3000, turretMax: 2,
         // 撞了不是直接死，而是从头部剪掉 3 节（剪到最短 2 节还短就死）
-        cutWall: 3, cutSnake: 3 } },
+        cutWall: 3, cutSnake: 3,
+        holdToMove: true } },
     { id: 'practice', name: '空场练习', note: '30×20，没有敌人，专心练手感',
       cfg: { cols: 30, rows: 20, enemies: false, apples: 6, stepMs: 300, turretMax: 6 } },
     { id: 'giant', name: '巨幕', note: '200×150 大地图，镜头跟着你走',
@@ -335,8 +419,31 @@ const LEVEL_PRESETS = [
         powerGap: 25, i_speed_max: 4, i_widen_max: 4,
         // 苹果：开局就摆 120 个，而且不设上限（随时间一直涨，直到场地塞满）
         appleBase: 120, apples: 0 } },
+    { id: 'rogue', name: '房间迷宫', note: 'Roguelike：一间间往前推，清场开门；加速道具很多，没有拓宽',
+      cfg: {
+          rooms: 5, cols: 0, rows: 0, stepMs: 240, hp0: 2, apples: 6,
+          enemyMax: 6, enemyGap: 4000, turretMax: 4,
+          powerGap: 40,                      // 道具整体刷新更快（40% = 2.5 倍频）
+          boostMs: 45000,                    // 加速持续 45 秒
+          i_speed_on: true, i_speed_max: 2, i_speed_gap: 6000,   // 加速：同屏 2 个、6 秒补一个
+          i_widen_on: false,                 // 房间模式不要「拓宽」——场地一变，门和地图就对不上了
+          i_team_on: true, i_team_max: 2, i_team_gap: 12000,   // 全场增益：上限 2（宝箱房要摆 2 个）
+          cutWall: 3, cutSnake: 3, invMs: 1600   // 撞墙/撞蛇是「剪短 3 节」而不是直接死
+      } },
     { id: 'blitz', name: '闪电战', note: '180ms 一步、1 血，撞一下就出局',
-      cfg: { stepMs: 180, hp0: 1, apples: 4, enemyMax: 4, turretCost: 1 } }
+      cfg: { stepMs: 180, hp0: 1, apples: 4, enemyMax: 4, turretCost: 1 } },
+    { id: 'dodge', name: '弹幕场', note: '碰撞不死：撞墙被挡住、撞蛇穿过去 —— 只有子弹能要命',
+      cfg: {
+          cols: 48, rows: 34, stepMs: 150, hp0: 3, apples: 6,
+          noCrash: true,                    // 碰撞不死（关键）
+          enemyMax: 6, enemyGap: 3000,
+          turretMax: 6,                     // 玩家自己也能建塔，弹幕更密
+          turretCost: 1,
+          omniMax: 2, omniDmg: 1,           // 场上固定 2 座全向炮塔（一座在正中）：八方向乱射、射程全图、1 点伤害
+          i_speed_on: true, i_speed_max: 2, i_speed_gap: 8000,
+          i_widen_on: false,                // 场地固定，别乱变
+          apples: 8
+      } }
 ];
 
 const PRESET_KEY = 'snake-army-levels-v1';
@@ -403,195 +510,6 @@ function buildStartPresets() {
 // 预设缩略图：按这套关卡的场地比例现画一个小示意图。零资源，全部现画；
 // 图上的信息是真的 —— 长条场地一眼看出是「高铁大陆 / 巨幕」，方场地是「经典 / 生存」。// 每个内置预设一张手写的 SVG（96×58）。用 currentColor 的部分跟着主题/选中态变色，
 // 特征色固定。data-icon 只是给测试和调试用的标记。
-const PRESET_ICONS = {
-    // 经典：方场地 + 一条绿蛇 + 一个苹果
-    classic:
-        '<svg class="presetIcon" data-icon="classic" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="20" y="8" width="56" height="42" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
-        '<circle cx="62" cy="20" r="3" fill="crimson"/>' +
-        '<circle cx="30" cy="38" r="3.2" fill="#008000"/><circle cx="37" cy="38" r="3.2" fill="#008000"/>' +
-        '<circle cx="44" cy="38" r="3.2" fill="#008000"/><circle cx="44" cy="31" r="3.2" fill="#146b14"/>' +
-        '</svg>',
-
-    // 大乱斗：宽场地 + 满场敌人和苹果（密到发糊就对了）
-    brawl:
-        '<svg class="presetIcon" data-icon="brawl" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="8" y="12" width="80" height="34" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
-        '<circle cx="20" cy="21" r="2.6" fill="crimson"/><circle cx="34" cy="30" r="2.6" fill="#a24bd4"/>' +
-        '<circle cx="46" cy="19" r="2.6" fill="#a24bd4"/><circle cx="58" cy="33" r="2.6" fill="crimson"/>' +
-        '<circle cx="70" cy="22" r="2.6" fill="#a24bd4"/><circle cx="80" cy="35" r="2.6" fill="#a24bd4"/>' +
-        '<circle cx="27" cy="38" r="2.6" fill="#008000"/><circle cx="63" cy="15" r="2.6" fill="crimson"/>' +
-        '</svg>',
-
-    // 生存：厚血（三颗心）+ 少苹果（场地里空空荡荡）
-    survive:
-        '<svg class="presetIcon" data-icon="survive" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="14" y="8" width="68" height="42" rx="4" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="3 3"/>' +
-        '<path d="M22 22c-4-4-9-2-9 2 0 4 6 7 9 9 3-2 9-5 9-9 0-4-5-6-9-2Z" fill="#ff4d6d"/>' +
-        '<path d="M47 18c-3-3-7-1.5-7 1.5 0 3 4.5 5.2 7 6.8 2.5-1.6 7-3.8 7-6.8 0-3-4-4.5-7-1.5Z" fill="#ff4d6d"/>' +
-        '<path d="M74 22c-3-3-7-1.5-7 1.5 0 3 4.5 5.2 7 6.8 2.5-1.6 7-3.8 7-6.8 0-3-4-4.5-7-1.5Z" fill="#ff4d6d"/>' +
-        '</svg>',
-
-    // 空场练习：一块干净的空场地，只有你自己那条蛇
-    practice:
-        '<svg class="presetIcon" data-icon="practice" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="20" y="8" width="56" height="42" rx="4" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-opacity="0.45" stroke-dasharray="5 4"/>' +
-        '<circle cx="38" cy="30" r="3.4" fill="#008000"/>' +
-        '</svg>',
-
-    // 巨幕：大屏幕 + 四角标记
-    giant:
-        '<svg class="presetIcon" data-icon="giant" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="10" y="10" width="76" height="38" rx="3" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
-        '<path d="M6 20V6h14M90 20V6H76M6 38v14h14M90 38v14H76" stroke="currentColor" stroke-opacity="0.5" fill="none"/>' +
-        '<circle cx="30" cy="29" r="3" fill="#008000"/><circle cx="52" cy="24" r="2.6" fill="crimson"/><circle cx="64" cy="34" r="2.6" fill="#a24bd4"/>' +
-        '</svg>',
-
-    // 高铁大陆：又扁又长的场地 + 速度线 + 闪电
-    rail:
-        '<svg class="presetIcon" data-icon="rail" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<rect x="6" y="24" width="84" height="24" rx="4" fill="currentColor" fill-opacity="0.10" stroke="currentColor" stroke-opacity="0.5"/>' +
-        '<path d="M10 18h30M18 11h22M30 4h14" stroke="currentColor" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round"/>' +
-        '<path d="M78 4L70 18h6l-3 12 12-16h-6l4-10Z" fill="#ffd21f"/>' +
-        '<circle cx="20" cy="36" r="3" fill="#008000"/><circle cx="34" cy="36" r="2.6" fill="crimson"/>' +
-        '<circle cx="50" cy="36" r="2.6" fill="crimson"/><circle cx="66" cy="36" r="2.6" fill="#a24bd4"/>' +
-        '</svg>',
-
-    // 闪电战：一颗大闪电 + 一颗空心心（只有 1 滴血，碰一下就没了）
-    blitz:
-        '<svg class="presetIcon" data-icon="blitz" viewBox="0 0 96 58" aria-hidden="true">' +
-        '<path d="M56 2L34 30h12l-6 26 24-32H52l8-22Z" fill="#ffd21f"/>' +
-        '<path d="M24 14c-4-4-10-2-10 3 0 5 7 9 10 11 3-2 10-6 10-11 0-5-6-7-10-3Z" fill="none" stroke="#ff4d6d" stroke-width="2"/>' +
-        '</svg>'
-};
-
-// 图标上要画哪些「特征徽章」——全部从关卡数值推导，所以以后新加预设自动就有：
-//   速度（步长越小闪电越多）/ 厚血（心）/ 没有敌人（禁）/ 道具很多（星）/ 自定义（虚线 + 加号）
-function presetBadges(cfg, custom) {
-    const step = Math.round(cfg.stepMs || 500);
-    return {
-        speed: step <= 140 ? 3 : (step <= 260 ? 2 : (step <= 420 ? 1 : 0)),
-        hp: Math.round(cfg.hp0 || 1) >= 3,
-        noEnemy: cfg.enemies === false,
-        items: Math.round(cfg.i_speed_max || 0) + Math.round(cfg.i_widen_max || 0) >= 4,
-        custom: !!custom
-    };
-}
-
-// 一个小闪电（速度）
-function boltSvg(x, y, s) {
-    return '<path d="M' + x + ' ' + (y - s) + 'L' + (x - s * 0.7) + ' ' + (y + s * 0.15) +
-        'H' + (x - s * 0.1) + 'L' + (x - s * 0.35) + ' ' + (y + s) +
-        'L' + (x + s * 0.75) + ' ' + (y - s * 0.1) + 'H' + (x + s * 0.1) + 'Z" fill="#ffd21f"/>';
-}
-
-// 一个小心形（厚血）
-function heartSvg(x, y, s) {
-    return '<path d="M' + x + ' ' + (y + s * 0.55) +
-        'C' + (x - s * 1.15) + ' ' + (y - s * 0.35) + ' ' + (x - s * 0.35) + ' ' + (y - s * 1.05) + ' ' + x + ' ' + (y - s * 0.4) +
-        'C' + (x + s * 0.35) + ' ' + (y - s * 1.05) + ' ' + (x + s * 1.15) + ' ' + (y - s * 0.35) + ' ' + x + ' ' + (y + s * 0.55) +
-        'Z" fill="#ff4d6d"/>';
-}
-
-// 预设图标：用 SVG 现拼，缩略图就是「这套关卡的场地比例 + 道具密度 + 特征徽章」。
-// 用 currentColor，所以跟着主题/选中态变色，任何缩放都清晰，也不需要任何图片文件。
-function presetIconSvg(cfg, id, custom) {
-    // 内置预设：用写好的那张
-    if (!custom && PRESET_ICONS[id]) return PRESET_ICONS[id];
-
-    const cols = Math.max(4, Math.round(cfg.cols || 15));
-    const rows = Math.max(4, Math.round(cfg.rows || 15));
-    const VW = 96;
-    const VH = 58;
-
-    // 场地矩形：按比例装进框里（长条关卡一眼就看出来）
-    const k = Math.min((VW - 10) / cols, (VH - 10) / rows);
-    const w = Math.max(12, cols * k);
-    const h = Math.max(12, rows * k);
-    const x = (VW - w) / 2;
-    const y = (VH - h) / 2;
-
-    // 用 id 当种子：同一套关卡每次画出来都一样
-    let seed = 7;
-    for (let i = 0; i < id.length; i++) seed = (seed * 31 + id.charCodeAt(i)) & 0xffff;
-    const rnd = function () {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed / 0x7fffffff;
-    };
-    const dot = function (color, r) {
-        return '<circle cx="' + (x + (0.08 + rnd() * 0.84) * w).toFixed(1) +
-            '" cy="' + (y + (0.08 + rnd() * 0.84) * h).toFixed(1) +
-            '" r="' + r + '" fill="' + color + '"/>';
-    };
-
-    let out = '<svg class="presetIcon" data-icon="' + (custom ? 'custom' : 'auto') + '" viewBox="0 0 ' + VW + ' ' + VH + '" aria-hidden="true">';
-    // 场地
-    out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) +
-        '" height="' + h.toFixed(1) + '" rx="3" fill="currentColor" fill-opacity="0.10" ' +
-        'stroke="currentColor" stroke-opacity="0.5"/>';
-
-    // 网格：格子太小就不画（200×150 会糊成一片）
-    if (k >= 3) {
-        let d = '';
-        for (let cx = 1; cx < cols; cx++) {
-            const px = (x + cx * k).toFixed(1);
-            d += 'M' + px + ' ' + y.toFixed(1) + 'V' + (y + h).toFixed(1);
-        }
-        for (let cy = 1; cy < rows; cy++) {
-            const py = (y + cy * k).toFixed(1);
-            d += 'M' + x.toFixed(1) + ' ' + py + 'H' + (x + w).toFixed(1);
-        }
-        out += '<path d="' + d + '" stroke="currentColor" stroke-opacity="0.13" fill="none"/>';
-    }
-
-    // 苹果 / 敌人 / 炮塔：数量也按关卡来，密度一眼可见
-    const apples = Math.max(1, Math.min(16, Math.round(cfg.apples || 4)));
-    for (let i = 0; i < apples; i++) out += dot('crimson', 1.5);
-    const enemies = (cfg.enemies === false) ? 0 : Math.max(0, Math.min(9, Math.round((cfg.enemyMax || 3) / 2)));
-    for (let i = 0; i < enemies; i++) out += dot('#a24bd4', 1.7);
-    const turrets = Math.max(0, Math.min(6, Math.round((cfg.turretMax || 4) / 3)));
-    for (let i = 0; i < turrets; i++) out += dot('#ffd166', 1.4);
-
-    // 玩家那条蛇（不在种子随机里，位置固定）
-    out += '<circle cx="' + (x + 0.3 * w).toFixed(1) + '" cy="' + (y + 0.55 * h).toFixed(1) + '" r="2.2" fill="#008000"/>';
-
-    // ---------------- 特征徽章 ----------------
-    const bd = presetBadges(cfg, custom);
-
-    // 速度：右上角排闪电（越快越多）
-    for (let i = 0; i < bd.speed; i++) out += boltSvg(VW - 10 - i * 9, 11, 6);
-
-    // 厚血：左上角一颗心
-    if (bd.hp) out += heartSvg(12, 10, 6);
-
-    // 没敌人：右上角一个「禁」圈
-    if (bd.noEnemy) {
-        out += '<circle cx="' + (VW - 12) + '" cy="11" r="6" fill="none" stroke="#ff8fa3" stroke-width="1.6"/>' +
-            '<path d="M' + (VW - 16.2) + ' 6.8L' + (VW - 7.8) + ' 15.2" stroke="#ff8fa3" stroke-width="1.6"/>';
-    }
-
-    // 道具很多：左下角一颗四角星
-    if (bd.items) {
-        const sx = 13;
-        const sy = VH - 11;
-        out += '<path d="M' + sx + ' ' + (sy - 7) + 'L' + (sx + 2) + ' ' + (sy - 2) + 'L' + (sx + 7) + ' ' + sy +
-            'L' + (sx + 2) + ' ' + (sy + 2) + 'L' + sx + ' ' + (sy + 7) + 'L' + (sx - 2) + ' ' + (sy + 2) +
-            'L' + (sx - 7) + ' ' + sy + 'L' + (sx - 2) + ' ' + (sy - 2) + 'Z" fill="#00bfff"/>';
-    }
-
-    // 自定义：虚线场地 + 右下角加号（表示「你自己画」）
-    if (bd.custom) {
-        out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + h.toFixed(1) +
-            '" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.8" stroke-dasharray="4 3"/>';
-        const px = VW - 13;
-        const py = VH - 12;
-        out += '<path d="M' + (px - 6) + ' ' + py + 'H' + (px + 6) + 'M' + px + ' ' + (py - 6) + 'V' + (py + 6) +
-            '" stroke="#7fd7ff" stroke-width="2.4" stroke-linecap="round"/>';
-    }
-
-    out += '</svg>';
-    return out;
-}
 
 function presetCard(row, id, name, note, cfg) {
     const card = document.createElement('button');
@@ -988,6 +906,7 @@ function levelToBytes(cfg) {
     u16(val('enemyGap') / 500);
     u16(val('boostMs') / 1000);
     out.push(clampByte(val('powerGap')));
+    out.push(clampByte(val('rooms')));
     out.push(clampByte(val('cutWall')));
     out.push(clampByte(val('cutSnake')));
     u16(val('invMs') / 100);
@@ -1013,7 +932,7 @@ function bytesToLevel(bytes) {
     const need = function (n) { if (p + n > bytes.length) throw new Error('短码不完整'); };
     const u8 = function () { need(1); return bytes[p++]; };
     const u16 = function () { need(2); const a = bytes[p++]; return a | (bytes[p++] << 8); };
-    if (bytes.length < 36) throw new Error('短码太短');
+    if (bytes.length < 37) throw new Error('短码太短');
     const cfg = {};
     cfg.cols = u16();
     cfg.rows = u16();
@@ -1033,6 +952,7 @@ function bytesToLevel(bytes) {
     cfg.enemyGap = u16() * 500;
     cfg.boostMs = u16() * 1000;
     cfg.powerGap = u8();
+    cfg.rooms = u8();
     cfg.cutWall = u8();
     cfg.cutSnake = u8();
     cfg.invMs = u16() * 100;

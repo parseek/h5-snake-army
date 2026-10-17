@@ -109,11 +109,46 @@ if (state === 'running') {
 
         expirePlayerBoost(p, now);
 
+        // 「按住才走」：像 RPG Maker 那样
+        //   · 松手时先把「正在走的这一格」走完（否则头会从半格弹回格子中心，就是「突然变回来」）
+        //   · 走完后原地停住，这时按方向可以「原地转身」
+        if (levelCfg.holdToMove) {
+            const held = heldDirs && (heldDirs.up || heldDirs.down || heldDirs.left || heldDirs.right);
+            if (held) {
+                p.holding = false;
+            } else if (p.holding) {
+                // 松手后正在「把这一格动画走完」：照常累积，走完在下面那个 break 停住
+            } else if (p.acc > p.stepMs * 0.15) {
+                // 真的按住走了一段：松手时把这一格动画走完
+                p.holding = true;
+            } else {
+                // 只是「点了一下」：当作原地转头，不走路（那一丁点进度直接丢掉）
+                // 已经站定：允许原地转身（只改朝向，不移动）
+                if (p.wantDir && (p.wantDir.x !== p.dir.x || p.wantDir.y !== p.dir.y)) {
+                    p.dir = p.wantDir;
+                }
+                if (p.queue && p.queue.length) p.dir = p.queue.shift();
+                p.acc = 0;
+                continue;
+            }
+        }
+
         // 每帧最多累积一个步长：切到后台再回来不会瞬间追帧
         p.acc += Math.min(dtMs, p.stepMs);
         while (p.acc >= p.stepMs && state === 'running' && p.alive) {
             p.acc -= p.stepMs;
             step(p, now);
+            // 「按住才走」：松手后这一格走完就停住，不要继续下一格
+            if (p.holding) {
+                p.holding = false;
+                p.acc = 0;
+                break;
+            }
+            // 走完这一格之后才应用「按住的新方向」—— 所以切换方向最多多走一格
+            if (levelCfg.holdToMove && p.wantDir &&
+                (p.wantDir.x !== p.dir.x || p.wantDir.y !== p.dir.y)) {
+                p.dir = p.wantDir;
+            }
         }
     }
 
@@ -132,6 +167,7 @@ if (state === 'running') {
 
     // 敌人蛇：补位 / 难度爬升 / 各自按自己的节奏走
     updateEnemySpawns(now);
+    if (typeof updateRooms === 'function') updateRooms(now);   // 房间模式：清场判定 + 踩门
     const list = enemies.slice();
     for (let i = 0; i < list.length; i++) {
         const en = list[i];
@@ -144,6 +180,11 @@ if (state === 'running') {
         if (enemyDef(en).shoots && now >= en.shootAt) {
             en.shootAt = now + ENEMY_SHOOT_MS;
             fireEnemyBullet(en);
+        }
+        // BOSS：各个炮口定期放射
+        if (en.kind === 'boss' && now >= (en.volleyAt || 0)) {
+            en.volleyAt = now + (enemyDef(en).gunMs || 1500);
+            if (typeof fireBossVolley === 'function') fireBossVolley(en, now);
         }
 
         en.acc += Math.min(dtMs, en.stepMs);

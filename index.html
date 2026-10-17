@@ -474,6 +474,122 @@
             border-color: rgba(140, 240, 180, 0.7);
         }
 
+        /* 设置项前面那个小图标：跟着文字颜色走 */
+        .fieldIcon {
+            width: 16px;
+            height: 16px;
+            margin-right: 5px;
+            vertical-align: -3px;
+            flex: 0 0 auto;
+            opacity: 0.85;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.4;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        /* ------------------------------ 关卡修改器：标签页 + 侧栏 / 抽屉 ------------------------------ */
+        .cfgTabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            width: 100%;
+            max-width: 560px;
+            justify-content: center;
+        }
+
+        .cfgTab {
+            padding: 6px 11px;
+            font: inherit;
+            font-size: 13px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            border-radius: 999px;
+            cursor: pointer;
+        }
+
+        .cfgTab.is-on {
+            background: rgba(120, 220, 160, 0.3);
+            border-color: rgba(140, 240, 180, 0.75);
+        }
+
+        /* 一页一段：只有当前页显示 */
+        .cfgSec {
+            display: none;
+            width: 100%;
+        }
+
+        .cfgSec.is-on {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #cfgPanel {
+            /* 标签页版本：整块用视口高度，内容在中间滚动，底部按钮永远在 */
+            max-height: 100vh;
+            overflow: hidden;
+        }
+
+        .cfgScroll {
+            flex: 1 1 auto;
+            min-height: 0;
+            width: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cfgScroll .cfgSec > * {
+            max-width: 560px;
+        }
+
+        .cfgFoot {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding-top: 8px;
+            width: 100%;
+        }
+
+        /* 手机：标签改成横着能滑的一行，输入框字号 16px（iOS 不放大），按钮更高好点 */
+        @media (max-width: 700px) {
+            #cfgPanel {
+                padding: 16px 12px;
+            }
+
+            #cfgPanel .cfgTabs {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                justify-content: flex-start;
+                max-width: 100%;
+                padding-bottom: 4px;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            #cfgPanel .cfgTab {
+                flex: 0 0 auto;
+            }
+
+            #cfgPanel input,
+            #cfgPanel select,
+            #cfgPanel textarea {
+                font-size: 16px;
+            }
+
+            #cfgPanel .cfgFoot .startBtn {
+                padding: 12px 0;
+            }
+        }
+
         /* 启动兜底提示：平时不显形，脚本没跑起来才在 2 秒后出现 */
         .bootWarn {
             position: fixed;
@@ -782,7 +898,31 @@
             box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.28);
         }
 
-        .chatbar[hidden] {
+        /* 常驻聊天小窗：左下角，显示最近几条；点一下打开完整聊天 */
+#chatFeed {
+  position: fixed;
+  left: 12px;
+  bottom: 96px;
+  z-index: 42;
+  max-width: min(46vw, 340px);
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: auto;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+#chatFeed[hidden] { display: none; }
+#chatFeed .feedRow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.92; }
+#chatFeed .feedRow.me { opacity: 1; }
+#chatFeed .feedWho { color: #9fe3b6; font-weight: 600; }
+#chatFeed .feedRow.me .feedWho { color: #ffd45e; }
+
+.chatbar[hidden] {
             display: none;
         }
 
@@ -1034,8 +1174,9 @@
             <span>最高 <b id="best">0</b></span>
             <span>场地 <b id="size">30×15</b></span>
             <span id="hudPlayers"></span>
-            <span class="boost" id="boost" hidden>⚡ 加速 <b id="boostLeft">0</b>s</span>
+            <span class="boost" id="boost" hidden>⚡ 加速 <b id="boostLeft">0</b><span id="boostUnit">s</span></span>
             <span class="enemy" id="enemyTag" hidden>🐍 <b id="enemyLeft">0/1</b></span>
+            <span class="roomTag" id="roomTag" hidden>🏚 1/5</span>
         </div>
 
         <div class="stage">
@@ -1048,6 +1189,7 @@
                     <button class="startBtn big" id="modeBtnLocal">▶ 本地</button>
                     <button class="startBtn big" id="modeBtnNet">📡 开启房间</button>
                 </div>
+                <button class="startBtn ghost" id="continueBtn" hidden>💾 继续上一局</button>
 
                 <!-- 下面全是设置：点一下只是「选中」，不会开局 -->
                 <div class="sub">关卡</div>
@@ -1058,6 +1200,7 @@
                     <button class="startBtn small" id="startTeamBtn">合作</button>
                     <button class="startBtn small" id="sfxBtn">🔊 音效：开</button>
                     <button class="startBtn small" id="themeBtn">🖥 主题：跟随系统</button>
+                    <button class="startBtn small" id="roomFxBtn">🎬 过场：黑场</button>
                 </div>
                 <div class="row">
                     <button class="startBtn ghost" id="levelBtnStart">🛠 自定义关卡（编辑器 / 存档 / 短码）</button>
@@ -1079,7 +1222,12 @@
                 <div class="title">🛠 关卡修改器</div>
                 <div class="tip" id="cfgWho"></div>
 
+                <!-- 标签栏：预设 / 短码 / 各个分节（由 level.js 生成按钮） -->
+                <div class="cfgTabs" id="cfgTabs"></div>
+
+                <div class="cfgScroll" id="cfgScroll">
                 <!-- 关卡预设：内置几个，玩家自己存的放 localStorage，也能存成文件传来传去 -->
+                <div class="cfgSec" data-tab="preset">
                 <div class="tip sec">关卡预设</div>
                 <select id="cfgPresetSel" class="netIce"></select>
                 <input id="cfgPresetName" class="netIce" spellcheck="false" placeholder="预设名字（存 / 删都用它）" />
@@ -1093,7 +1241,10 @@
                     <input type="file" id="cfgLevelFile" accept=".json,application/json" hidden />
                 </div>
 
+                </div>
+
                 <!-- 关卡短码：开头一段是给人看的（名字/尺寸/指纹），#SNK# 之后给程序 -->
+                <div class="cfgSec" data-tab="share">
                 <div class="tip sec">分享短码</div>
                 <div class="row">
                     <button class="startBtn small" id="cfgCodeStyleBtn">编码：紧凑</button>
@@ -1106,16 +1257,32 @@
                     <button class="startBtn small" id="cfgCodeLoadBtn">加载短码</button>
                     <button class="startBtn small" id="cfgCodeCopyBtn">复制</button>
                 </div>
+                </div>
 
                 <div id="cfgBody"></div>
                 <div class="tip" id="cfgNote"></div>
-                <div class="row">
-                    <button class="startBtn small" id="cfgResetBtn">恢复默认</button>
-                    <button class="startBtn small" id="cfgRestartBtn">按新关卡重开</button>
-                    <button class="startBtn small" id="sfxBtn2">🔊 音效：开</button>
-                    <button class="startBtn small" id="themeBtn2">🖥 主题：跟随系统</button>
                 </div>
-                <button class="startBtn" id="cfgCloseBtn">返回游戏</button>
+
+                <div class="cfgFoot">
+                    <div class="row">
+                        <select id="saveSlotSel" class="netIce" style="max-width:150px">
+                            <option value="0">槽 1</option>
+                            <option value="1">槽 2</option>
+                            <option value="2">槽 3</option>
+                        </select>
+                        <button class="startBtn small" id="saveRunBtn">💾 存档</button>
+                        <button class="startBtn small" id="loadRunBtn">📂 读档</button>
+                        <button class="startBtn small" id="clearRunBtn">🗑 删档</button>
+                    </div>
+                    <div class="row">
+                        <button class="startBtn small" id="cfgResetBtn">恢复默认</button>
+                        <button class="startBtn small" id="cfgRestartBtn">按新关卡重开</button>
+                        <button class="startBtn small" id="sfxBtn2">🔊 音效：开</button>
+                        <button class="startBtn small" id="themeBtn2">🖥 主题：跟随系统</button>
+                        <button class="startBtn small" id="roomFxBtn2">🎬 过场：黑场</button>
+                    </div>
+                    <button class="startBtn" id="cfgCloseBtn">返回游戏</button>
+                </div>
             </div>
 
             <div class="start" id="netPanel" hidden>
@@ -1272,6 +1439,7 @@
             </div>
         </div>
 
+        <div id="chatFeed" hidden title="点一下打开聊天"></div>
         <div class="chatbar" id="chatBar" hidden>
             <div class="chatList" id="chatList"></div>
             <div class="chatInputRow">
@@ -1311,7 +1479,12 @@
     <script src="./assets/game.js"></script>
     <script src="./assets/render.js"></script>
     <script src="./assets/input.js"></script>
+    <script src="./assets/cmd.js"></script>
     <script src="./assets/net-session.js"></script>
+    <script src="./assets/rng.js"></script>
+    <script src="./assets/rooms.js"></script>
+    <script src="./assets/save.js"></script>
+    <script src="./assets/icons.js"></script>
     <script src="./assets/level.js"></script>
         <!-- 启动脚本单独一个文件：这样服务器的 CSP 只允许 script-src 'self' 时也跑得起来 -->
         <script src="./assets/boot.js"></script>

@@ -83,6 +83,7 @@ function onKeyDown(ev) {
     const k2 = KEYMAP_P2[key];
     if (k1 || k2) {
         ev.preventDefault();
+        if (heldDirs) heldDirs[k1 || k2] = true;   // 「按住才走」用
         if (dualLocal()) {
             // 本地双人：两套各管一条
             if (k1) turn(players[0], k1);
@@ -141,9 +142,29 @@ function onKeyDown(ev) {
 
 document.addEventListener('keydown', onKeyDown);
 
+// 松开方向键：清掉「按住」状态
+document.addEventListener('keyup', function (ev) {
+    const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const k1 = KEYMAP_P1[key];
+    const k2 = KEYMAP_P2[key];
+    if ((k1 || k2) && heldDirs) heldDirs[k1 || k2] = false;
+});
+
+// 失焦时全部松开（不然切走再回来蛇会一直走）
+window.addEventListener('blur', function () {
+    if (!heldDirs) return;
+    heldDirs.up = heldDirs.down = heldDirs.left = heldDirs.right = false;
+});
+
 Array.prototype.forEach.call(
     document.querySelectorAll('.operate .btn[data-dir]'),
     function (btn) {
+        const dir = btn.getAttribute('data-dir');
+        // 「按住才走」：按下/抬起都记一下（同时保留 click 的转向行为）
+        btn.addEventListener('pointerdown', function () { if (heldDirs) heldDirs[dir] = true; });
+        btn.addEventListener('pointerup', function () { if (heldDirs) heldDirs[dir] = false; });
+        btn.addEventListener('pointercancel', function () { if (heldDirs) heldDirs[dir] = false; });
+        btn.addEventListener('pointerleave', function () { if (heldDirs) heldDirs[dir] = false; });
         btn.addEventListener('click', function () {
             tapFeedback();
             // 客机点屏幕方向键也要发给主机，不然本地是空操作
